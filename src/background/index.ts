@@ -12,6 +12,11 @@ const tabHistory = new Map<number, Message[]>()
 
 chrome.runtime.onMessage.addListener(
   (msg: ContentToBackground, sender, sendResponse) => {
+    if (msg.type === 'OPEN_THREAD_TAB') {
+      chrome.tabs.create({ url: 'https://claude.ai/new' })
+      return
+    }
+
     if (msg.type === 'NEW_MESSAGE') {
       const tabId = sender.tab?.id
       if (tabId === undefined) return

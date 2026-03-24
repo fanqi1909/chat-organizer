@@ -1,6 +1,7 @@
 import React from 'react'
 import type { Thread } from '../../shared/types'
 import { setPendingInject } from '../../shared/storage'
+import type { ContentToBackground } from '../../shared/types'
 
 interface Props {
   thread: Thread
@@ -13,7 +14,8 @@ export function ThreadCard({ thread, onDelete }: Props) {
 
   async function handleOpen() {
     await setPendingInject(thread)
-    chrome.tabs.create({ url: 'https://claude.ai/new' })
+    const msg: ContentToBackground = { type: 'OPEN_THREAD_TAB', thread }
+    chrome.runtime.sendMessage(msg)
   }
 
   return (

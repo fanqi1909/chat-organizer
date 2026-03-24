@@ -33,6 +33,7 @@ export interface PlatformAdapter {
 // Messages passed between content script and background service worker
 export type ContentToBackground =
   | { type: 'NEW_MESSAGE'; message: Message; history: Message[] }
+  | { type: 'OPEN_THREAD_TAB'; thread: Thread }
 
 export type BackgroundToContent =
   | { type: 'THREAD_DECISION'; newThread: boolean; title: string }
