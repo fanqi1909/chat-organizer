@@ -21,7 +21,8 @@ export class MessageObserver {
     }
 
     this.observer = new MutationObserver(() => this.scanMessages())
-    this.observer.observe(container, { childList: true, subtree: true })
+    // Also watch attributes so we catch data-is-streaming changing "true" → "false"
+    this.observer.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-is-streaming'] })
 
     // Initial scan
     this.scanMessages()
@@ -36,11 +37,12 @@ export class MessageObserver {
     const elements = this.adapter.getMessageElements()
 
     for (const el of elements) {
-      // Use the element's position in DOM as a stable ID if none exists
+      // Build a stable ID: prefer data attributes, fall back to text fingerprint
       const id =
-        el.getAttribute('data-testid') ??
         el.getAttribute('data-message-id') ??
-        this.generateId(el)
+        (el.getAttribute('data-testid') === 'user-message'
+          ? `human-${el.textContent?.trim().slice(0, 40)}`
+          : `ai-${el.textContent?.trim().slice(0, 40)}`)
 
       if (this.seenIds.has(id)) continue
 
@@ -48,8 +50,8 @@ export class MessageObserver {
       if (!extracted) continue
 
       // Only trigger topic detection on completed assistant messages
-      // (skip human messages — we'll batch them with the assistant reply)
-      if (extracted.role === 'assistant' && !this.isStreamingInProgress(el)) {
+      // extractMessage returns null for data-is-streaming="true", so extracted.role === 'assistant' means complete
+      if (extracted.role === 'assistant') {
         const message: Message = {
           id,
           role: extracted.role,
@@ -72,18 +74,6 @@ export class MessageObserver {
         this.history.push(message)
       }
     }
-  }
-
-  /**
-   * Heuristic: check if the assistant message is still streaming.
-   * Claude.ai adds a cursor/spinner element while generating.
-   */
-  private isStreamingInProgress(el: Element): boolean {
-    return (
-      el.querySelector('[data-testid="streaming-indicator"]') !== null ||
-      el.querySelector('.animate-pulse') !== null ||
-      el.querySelector('.streaming') !== null
-    )
   }
 
   private generateId(el: Element): string {
