@@ -4,114 +4,150 @@ import { getArchivedThreads, deleteArchivedThread } from '../../shared/storage'
 import { ThreadCard } from './thread-card'
 
 interface Props {
-  onQuote: (thread: Thread) => void
-  /** Bump this to force a refresh when a new thread is archived */
+  currentThread: Thread | null
+  onArchive: () => void
   refreshKey: number
 }
 
 const styles = `
+  * { box-sizing: border-box; margin: 0; padding: 0; }
   .tp-sidebar {
     position: fixed;
-    left: 0;
-    top: 0;
-    bottom: 0;
+    left: 0; top: 0; bottom: 0;
     width: 260px;
-    background: #1a1a2e;
-    color: #e2e8f0;
+    background: #f8f7f4;
+    color: #1a1a1a;
     display: flex;
     flex-direction: column;
     z-index: 9999;
-    box-shadow: 2px 0 8px rgba(0,0,0,0.3);
+    border-right: 1px solid #e5e3de;
     font-family: system-ui, sans-serif;
     font-size: 13px;
-    overflow: hidden;
-    transition: transform 0.2s ease;
   }
   .tp-sidebar-header {
-    padding: 16px;
-    border-bottom: 1px solid #2d2d4e;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    padding: 14px 14px 10px;
+    border-bottom: 1px solid #e5e3de;
   }
   .tp-sidebar-title {
     font-weight: 700;
-    font-size: 14px;
-    color: #a78bfa;
-    letter-spacing: 0.05em;
+    font-size: 13px;
+    color: #5c5c5c;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
   }
+  /* Current thread box */
+  .tp-current {
+    background: #fff;
+    border: 1px solid #e5e3de;
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .tp-current-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #9a9a9a;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 4px;
+  }
+  .tp-current-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1a1a1a;
+    margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tp-archive-btn {
+    width: 100%;
+    padding: 5px;
+    background: #1a1a1a;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .tp-archive-btn:hover { opacity: 0.75; }
+  .tp-no-thread {
+    font-size: 12px;
+    color: #b0aca5;
+    text-align: center;
+    padding: 6px 0;
+  }
+  /* Archived list */
   .tp-sidebar-body {
     flex: 1;
     overflow-y: auto;
     padding: 8px;
   }
+  .tp-section-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #9a9a9a;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    padding: 6px 4px 4px;
+  }
   .tp-empty {
-    color: #64748b;
+    color: #b0aca5;
     text-align: center;
-    padding: 32px 16px;
+    padding: 24px 12px;
     font-size: 12px;
+    line-height: 1.5;
   }
+  /* Thread cards */
   .tp-card {
-    background: #16213e;
+    background: #fff;
+    border: 1px solid #e5e3de;
     border-radius: 8px;
-    margin-bottom: 8px;
-    overflow: hidden;
-    border: 1px solid #2d2d4e;
-  }
-  .tp-card-header {
+    margin-bottom: 6px;
+    padding: 10px 10px 10px 12px;
+    cursor: pointer;
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 10px 12px;
-    cursor: pointer;
-    user-select: none;
+    gap: 6px;
+    transition: background 0.1s;
   }
-  .tp-card-header:hover { background: #1e2a4a; }
-  .tp-card-chevron { color: #7c3aed; font-size: 12px; margin-top: 2px; }
+  .tp-card:hover { background: #f0ede8; }
   .tp-card-info { flex: 1; min-width: 0; }
   .tp-card-title {
     font-weight: 600;
-    color: #e2e8f0;
+    font-size: 13px;
+    color: #1a1a1a;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    margin-bottom: 3px;
   }
-  .tp-card-meta { color: #64748b; font-size: 11px; margin-top: 2px; }
-  .tp-card-body { padding: 0 12px 8px; }
-  .tp-card-msg {
-    padding: 4px 0;
-    border-bottom: 1px solid #2d2d4e;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+  .tp-card-preview {
+    font-size: 12px;
+    color: #6b6b6b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 3px;
   }
-  .tp-msg-role { font-size: 10px; font-weight: 600; color: #7c3aed; text-transform: uppercase; }
-  .tp-msg-human .tp-msg-role { color: #06b6d4; }
-  .tp-msg-text { color: #94a3b8; font-size: 12px; line-height: 1.4; }
-  .tp-card-more { color: #64748b; font-size: 11px; padding: 4px 0; }
-  .tp-card-actions {
-    display: flex;
-    gap: 6px;
-    padding: 8px 12px;
-    border-top: 1px solid #2d2d4e;
-  }
-  .tp-btn-quote, .tp-btn-delete {
-    flex: 1;
-    padding: 4px;
-    border-radius: 4px;
+  .tp-card-meta { font-size: 11px; color: #b0aca5; }
+  .tp-btn-delete {
+    background: none;
     border: none;
+    color: #c0bbb5;
     cursor: pointer;
-    font-size: 11px;
-    font-weight: 600;
-    transition: opacity 0.15s;
+    font-size: 12px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    line-height: 1;
   }
-  .tp-btn-quote { background: #7c3aed; color: white; }
-  .tp-btn-quote:hover { opacity: 0.85; }
-  .tp-btn-delete { background: #2d2d4e; color: #94a3b8; }
-  .tp-btn-delete:hover { background: #7f1d1d; color: white; }
+  .tp-btn-delete:hover { background: #f0ede8; color: #e53e3e; }
 `
 
-export function Sidebar({ onQuote, refreshKey }: Props) {
+export function Sidebar({ currentThread, onArchive, refreshKey }: Props) {
   const [threads, setThreads] = useState<Thread[]>([])
 
   useEffect(() => {
@@ -128,23 +164,36 @@ export function Sidebar({ onQuote, refreshKey }: Props) {
       <style>{styles}</style>
       <div className="tp-sidebar">
         <div className="tp-sidebar-header">
-          <span className="tp-sidebar-title">Threads</span>
-          <span style={{ color: '#64748b', fontSize: 11 }}>{threads.length} archived</span>
+          <div className="tp-sidebar-title">Threads</div>
+          <div className="tp-current">
+            {currentThread ? (
+              <>
+                <div className="tp-current-label">Active</div>
+                <div className="tp-current-title">{currentThread.title}</div>
+                <button className="tp-archive-btn" onClick={onArchive}>
+                  Archive thread
+                </button>
+              </>
+            ) : (
+              <div className="tp-no-thread">No active thread</div>
+            )}
+          </div>
         </div>
+
         <div className="tp-sidebar-body">
+          {threads.length > 0 && (
+            <div className="tp-section-label">Archived</div>
+          )}
           {threads.length === 0 ? (
             <div className="tp-empty">
-              Archived threads will appear here.
-              <br />
-              <br />
-              Chat on claude.ai and topics will be grouped automatically.
+              Archive a thread to save it here.<br />
+              Click any thread to open it in a new conversation.
             </div>
           ) : (
             threads.map((thread) => (
               <ThreadCard
                 key={thread.id}
                 thread={thread}
-                onQuote={onQuote}
                 onDelete={handleDelete}
               />
             ))

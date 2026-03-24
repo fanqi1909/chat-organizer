@@ -3,7 +3,7 @@
   "name": "Thread Plugin",
   "version": "0.1.0",
   "description": "Auto-threading for Claude.ai conversations",
-  "permissions": ["storage", "cookies"],
+  "permissions": ["storage", "cookies", "tabs"],
   "host_permissions": [
     "https://claude.ai/*",
     "https://chat.openai.com/*"

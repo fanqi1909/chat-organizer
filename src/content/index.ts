@@ -4,8 +4,7 @@ import { getPlatformAdapter } from './platforms'
 import { MessageObserver } from './observer'
 import { ThreadManager } from './thread-manager'
 import { Sidebar } from './ui/sidebar'
-import { ThreadGroup } from './ui/thread-group'
-import { getSettings } from '../shared/storage'
+import { getSettings, getPendingInject, clearPendingInject } from '../shared/storage'
 import type { ContentToBackground, BackgroundToContent, Message, Thread } from '../shared/types'
 
 async function init() {
@@ -15,71 +14,44 @@ async function init() {
   const adapter = getPlatformAdapter()
   if (!adapter) return
 
-  // --- Sidebar ---
-  let sidebarRefreshKey = 0
+  // --- Check for pending thread inject (opened from archived thread click) ---
+  await maybeInjectPendingThread(adapter)
+
+  // --- Sidebar (single root, re-render on state change) ---
   const sidebarHost = document.createElement('div')
   sidebarHost.id = 'tp-sidebar-host'
   document.body.appendChild(sidebarHost)
 
-  // Use shadow DOM to isolate styles
   const sidebarShadow = sidebarHost.attachShadow({ mode: 'open' })
-  const sidebarRoot = document.createElement('div')
-  sidebarShadow.appendChild(sidebarRoot)
+  const sidebarContainer = document.createElement('div')
+  sidebarShadow.appendChild(sidebarContainer)
+  const sidebarRoot = createRoot(sidebarContainer)
+
+  let currentThread: Thread | null = null
+  let sidebarRefreshKey = 0
 
   function renderSidebar() {
-    createRoot(sidebarRoot).render(
+    sidebarRoot.render(
       React.createElement(Sidebar, {
+        currentThread,
+        onArchive: () => threadManager.archiveCurrentThread(),
         refreshKey: sidebarRefreshKey,
-        onQuote: handleQuote,
       }),
     )
-  }
-
-  function handleQuote(thread: Thread) {
-    const summary = `[Referencing thread: "${thread.title}"]\n${thread.messages
-      .map((m) => `${m.role === 'human' ? 'You' : 'Claude'}: ${m.text.slice(0, 200)}`)
-      .join('\n')}`
-    adapter.insertIntoInputBox(summary)
   }
 
   renderSidebar()
 
-  // Push page content to the right so sidebar doesn't overlap
+  // Push page content right to make room for sidebar
   document.body.style.marginLeft = '260px'
-
-  // --- Current thread indicator ---
-  let threadIndicatorHost: HTMLElement | null = null
-  let currentThreadRoot: ReturnType<typeof createRoot> | null = null
-
-  function showThreadIndicator(thread: import('../shared/types').Thread | null) {
-    if (!thread) {
-      threadIndicatorHost?.remove()
-      threadIndicatorHost = null
-      currentThreadRoot = null
-      return
-    }
-
-    if (!threadIndicatorHost) {
-      threadIndicatorHost = document.createElement('div')
-      threadIndicatorHost.id = 'tp-thread-indicator'
-      threadIndicatorHost.style.cssText =
-        'position:fixed;top:0;left:260px;right:0;z-index:9998;'
-      document.body.appendChild(threadIndicatorHost)
-      currentThreadRoot = createRoot(threadIndicatorHost)
-    }
-
-    currentThreadRoot!.render(
-      React.createElement(ThreadGroup, {
-        thread,
-        onArchive: () => threadManager.archiveCurrentThread(),
-      }),
-    )
-  }
 
   // --- Thread Manager ---
   const threadManager = new ThreadManager({
-    onThreadUpdate: showThreadIndicator,
-    onArchive: (_thread) => {
+    onThreadUpdate: (thread) => {
+      currentThread = thread
+      renderSidebar()
+    },
+    onArchive: () => {
       sidebarRefreshKey++
       renderSidebar()
     },
@@ -91,20 +63,11 @@ async function init() {
   })
 
   async function sendForDetection(message: Message, history: Message[]) {
-    const request: ContentToBackground = {
-      type: 'NEW_MESSAGE',
-      message,
-      history,
-    }
-
+    const request: ContentToBackground = { type: 'NEW_MESSAGE', message, history }
     try {
-      const response = (await chrome.runtime.sendMessage(
-        request,
-      )) as BackgroundToContent
-
+      const response = (await chrome.runtime.sendMessage(request)) as BackgroundToContent
       if (response.type === 'THREAD_DECISION') {
         if (response.newThread) {
-          // Archive current thread before starting new one (if exists)
           if (threadManager.getCurrentThread()) {
             await threadManager.archiveCurrentThread()
           }
@@ -120,14 +83,58 @@ async function init() {
 
   observer.start()
 
-  // Reset observer on SPA navigation (claude.ai is a SPA)
+  // Reset on SPA navigation
   let lastUrl = location.href
   new MutationObserver(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href
+      currentThread = null
+      renderSidebar()
       observer.reset()
     }
   }).observe(document, { subtree: true, childList: true })
+}
+
+/**
+ * If this tab was opened by clicking an archived thread, inject that thread's
+ * content into the input box so the user can continue in a fresh context.
+ */
+async function maybeInjectPendingThread(
+  adapter: ReturnType<typeof getPlatformAdapter>,
+) {
+  if (!adapter) return
+
+  const thread = await getPendingInject()
+  if (!thread) return
+
+  await clearPendingInject()
+
+  // Wait for the input box to appear (new conversation page may not be ready yet)
+  let attempts = 0
+  const inject = () => {
+    const input = adapter.getInputBox()
+    if (input) {
+      const context = buildThreadContext(thread)
+      adapter.insertIntoInputBox(context)
+    } else if (attempts++ < 20) {
+      setTimeout(inject, 500)
+    }
+  }
+  inject()
+}
+
+function buildThreadContext(thread: Thread): string {
+  const lines = [
+    `[Continuing from archived thread: "${thread.title}"]`,
+    '',
+    ...thread.messages.map(
+      (m) => `${m.role === 'human' ? 'You' : 'Claude'}: ${m.text.slice(0, 300)}`,
+    ),
+    '',
+    '---',
+    '',
+  ]
+  return lines.join('\n')
 }
 
 init()

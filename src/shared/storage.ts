@@ -38,3 +38,18 @@ export async function saveSettings(settings: Partial<Settings>): Promise<void> {
   const current = await getSettings()
   await chrome.storage.local.set({ [SETTINGS_KEY]: { ...current, ...settings } })
 }
+
+const PENDING_INJECT_KEY = 'pending_inject'
+
+export async function setPendingInject(thread: Thread): Promise<void> {
+  await chrome.storage.local.set({ [PENDING_INJECT_KEY]: thread })
+}
+
+export async function getPendingInject(): Promise<Thread | null> {
+  const result = await chrome.storage.local.get(PENDING_INJECT_KEY)
+  return (result[PENDING_INJECT_KEY] as Thread) ?? null
+}
+
+export async function clearPendingInject(): Promise<void> {
+  await chrome.storage.local.remove(PENDING_INJECT_KEY)
+}
