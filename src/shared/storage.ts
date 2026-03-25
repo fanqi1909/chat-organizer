@@ -1,4 +1,4 @@
-import type { Thread, ConversationGroup } from './types'
+import type { Thread, TopicGroup } from './types'
 
 const THREADS_KEY = 'archived_threads'
 const SETTINGS_KEY = 'settings'
@@ -97,28 +97,17 @@ function extractConversationId(url: string): string | undefined {
   return match?.[1]
 }
 
-const GROUPS_KEY = 'conversation_groups'
+const GROUPS_KEY = 'topic_groups'
 
-export async function saveConversationGroups(groups: ConversationGroup[]): Promise<void> {
+export async function saveTopicGroups(groups: TopicGroup[]): Promise<void> {
   await chrome.storage.local.set({ [GROUPS_KEY]: groups })
 }
 
-export async function getConversationGroups(): Promise<ConversationGroup[] | null> {
+export async function getTopicGroups(): Promise<TopicGroup[] | null> {
   const result = await chrome.storage.local.get(GROUPS_KEY)
-  return (result[GROUPS_KEY] as ConversationGroup[]) ?? null
+  return (result[GROUPS_KEY] as TopicGroup[]) ?? null
 }
 
-export async function clearConversationGroups(): Promise<void> {
-  await chrome.storage.local.remove([GROUPS_KEY, CONV_TITLES_KEY])
-}
-
-const CONV_TITLES_KEY = 'conv_titles'
-
-export async function saveConvTitles(titles: Record<string, string>): Promise<void> {
-  await chrome.storage.local.set({ [CONV_TITLES_KEY]: titles })
-}
-
-export async function getConvTitles(): Promise<Record<string, string>> {
-  const result = await chrome.storage.local.get(CONV_TITLES_KEY)
-  return (result[CONV_TITLES_KEY] as Record<string, string>) ?? {}
+export async function clearTopicGroups(): Promise<void> {
+  await chrome.storage.local.remove(GROUPS_KEY)
 }
