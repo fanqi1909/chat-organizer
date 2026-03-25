@@ -13,16 +13,9 @@ export class MessageObserver {
   ) {}
 
   start() {
-    const container = this.adapter.getChatContainer()
-    if (!container) {
-      // Retry after a short delay — page may still be loading
-      setTimeout(() => this.start(), 1000)
-      return
-    }
-
     this.observer = new MutationObserver(() => this.scanMessages())
-    // Also watch attributes so we catch data-is-streaming changing "true" → "false"
-    this.observer.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-is-streaming'] })
+    // Watch document.body — messages may not be inside <main>
+    this.observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-is-streaming'] })
 
     // Initial scan
     this.scanMessages()

@@ -6,6 +6,7 @@ import { ThreadCard } from './thread-card'
 interface Props {
   currentThread: Thread | null
   onArchive: () => void
+  onOpenThread: (thread: Thread) => void
   refreshKey: number
 }
 
@@ -28,14 +29,31 @@ const styles = `
     padding: 14px 14px 10px;
     border-bottom: 1px solid #e5e3de;
   }
+  .tp-sidebar-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
   .tp-sidebar-title {
     font-weight: 700;
     font-size: 13px;
     color: #5c5c5c;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    margin-bottom: 10px;
   }
+  .tp-new-chat-btn {
+    background: none;
+    border: 1px solid #e5e3de;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #5c5c5c;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .tp-new-chat-btn:hover { background: #f0ede8; }
   /* Current thread box */
   .tp-current {
     background: #fff;
@@ -147,7 +165,7 @@ const styles = `
   .tp-btn-delete:hover { background: #f0ede8; color: #e53e3e; }
 `
 
-export function Sidebar({ currentThread, onArchive, refreshKey }: Props) {
+export function Sidebar({ currentThread, onArchive, onOpenThread, refreshKey }: Props) {
   const [threads, setThreads] = useState<Thread[]>([])
 
   useEffect(() => {
@@ -164,7 +182,12 @@ export function Sidebar({ currentThread, onArchive, refreshKey }: Props) {
       <style>{styles}</style>
       <div className="tp-sidebar">
         <div className="tp-sidebar-header">
-          <div className="tp-sidebar-title">Threads</div>
+          <div className="tp-sidebar-title-row">
+            <div className="tp-sidebar-title">Threads</div>
+            <button className="tp-new-chat-btn" onClick={() => { window.location.href = 'https://claude.ai/new' }}>
+              + New Chat
+            </button>
+          </div>
           <div className="tp-current">
             {currentThread ? (
               <>
@@ -195,6 +218,7 @@ export function Sidebar({ currentThread, onArchive, refreshKey }: Props) {
                 key={thread.id}
                 thread={thread}
                 onDelete={handleDelete}
+                onOpen={onOpenThread}
               />
             ))
           )}

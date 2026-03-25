@@ -13,6 +13,7 @@ export interface Thread {
   archivedAt?: number
   /** Which conversation URL this thread belongs to */
   conversationUrl: string
+  conversationId?: string
 }
 
 export interface PlatformAdapter {
@@ -28,12 +29,28 @@ export interface PlatformAdapter {
   getInputBox(): HTMLElement | null
   /** Inserts text into the input box */
   insertIntoInputBox(text: string): void
+  /** Submits the current input box content */
+  submitInputBox(): void
+  /** Find the Recents <ul> in claude.ai's native sidebar */
+  getSidebarRecentsList(): HTMLElement | null
+  /** Get all conversation <li> items from the Recents list */
+  getSidebarConversationItems(): HTMLElement[]
+}
+
+export interface ConversationGroup {
+  name: string
+  ids: string[]
 }
 
 // Messages passed between content script and background service worker
 export type ContentToBackground =
   | { type: 'NEW_MESSAGE'; message: Message; history: Message[] }
-  | { type: 'OPEN_THREAD_TAB'; thread: Thread }
+  | { type: 'RESTORE_THREAD'; thread: Thread }
+  | { type: 'ORGANIZE_CONVERSATIONS'; conversations: Array<{ id: string; title: string; preview: string }> }
 
 export type BackgroundToContent =
   | { type: 'THREAD_DECISION'; newThread: boolean; title: string }
+  | { type: 'THREAD_RESTORED'; conversationId: string }
+  | { type: 'THREAD_RESTORE_FAILED' }
+  | { type: 'CONVERSATIONS_ORGANIZED'; groups: ConversationGroup[] }
+  | { type: 'ORGANIZE_FAILED' }

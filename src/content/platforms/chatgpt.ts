@@ -33,4 +33,11 @@ export const chatgptAdapter: PlatformAdapter = {
     input.focus()
     document.execCommand('insertText', false, text)
   },
+
+  submitInputBox() {
+    // TODO: implement ChatGPT submit
+  },
+
+  getSidebarRecentsList() { return null },
+  getSidebarConversationItems() { return [] },
 }
