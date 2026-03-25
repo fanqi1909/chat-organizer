@@ -416,7 +416,8 @@ export class ConversationManager {
     groupHeader.appendChild(name)
     groupHeader.appendChild(count)
 
-    groupHeader.addEventListener('click', () => {
+    groupHeader.addEventListener('click', (e) => {
+      e.stopPropagation()
       const expanded = !this.groupExpandState.get(group.name)
       this.groupExpandState.set(group.name, expanded)
       chevron.classList.toggle('expanded', expanded)
@@ -463,10 +464,9 @@ export class ConversationManager {
     item.appendChild(convTitle)
     item.appendChild(count)
 
-    item.addEventListener('click', () => {
-      const expanded = !this.convExpandState.get(convId)
-      this.convExpandState.set(convId, expanded)
-      threadSub.classList.toggle('expanded', expanded)
+    item.addEventListener('click', (e) => {
+      e.stopPropagation()
+      window.location.href = `/chat/${convId}`
     })
 
     container.appendChild(item)
