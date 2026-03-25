@@ -164,6 +164,23 @@ const SECTION_STYLES = `
     background: var(--bg-bg-200, rgba(255,255,255,0.05));
     color: var(--text-text-100, #fff);
   }
+  .tp-cm-conv-delete {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--text-text-400, #666);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 0 2px;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .tp-cm-conv-item:hover .tp-cm-conv-delete {
+    display: block;
+  }
+  .tp-cm-conv-delete:hover {
+    color: #e55;
+  }
   .tp-cm-conv-title {
     flex: 1;
     overflow: hidden;
@@ -440,8 +457,36 @@ export class ConversationManager {
     count.style.cssText = 'font-size: 10px; opacity: 0.4; flex-shrink: 0;'
     count.textContent = threads.length > 0 ? `${threads.length}` : ''
 
+    const deleteBtn = document.createElement('button')
+    deleteBtn.className = 'tp-cm-conv-delete'
+    deleteBtn.textContent = '✕'
+    deleteBtn.title = 'Delete conversation'
+    deleteBtn.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      if (!confirm(`Delete "${title}"?`)) return
+      const orgMatch = document.cookie.match(/lastActiveOrg=([^;]+)/)
+      const orgId = orgMatch?.[1]
+      if (!orgId) return
+      const res = await fetch(`/api/organizations/${orgId}/chat_conversations/${convId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (res.ok || res.status === 404) {
+        // Remove convId from all groups in storage
+        const groups = await getConversationGroups()
+        if (groups) {
+          const updated = groups
+            .map((g) => ({ ...g, ids: g.ids.filter((id) => id !== convId) }))
+            .filter((g) => g.ids.length > 0)
+          await saveConversationGroups(updated)
+        }
+        container.remove()
+      }
+    })
+
     item.appendChild(convTitle)
     item.appendChild(count)
+    item.appendChild(deleteBtn)
 
     item.addEventListener('click', (e) => {
       e.stopPropagation()
