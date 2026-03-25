@@ -354,32 +354,11 @@ export class ConversationManager {
           body.appendChild(this.buildGroup(group, threadsByConv, convTitles))
         }
       } else {
-        // Show flat list of conversations that have threads
-        const threadsByConv = await getThreadsByConversation()
-        const activeThreads = await getAllActiveThreads()
-        const allConvIds = new Set([
-          ...Object.keys(threadsByConv),
-          ...Object.keys(activeThreads),
-        ])
-
-        if (allConvIds.size === 0) {
-          const empty = document.createElement('div')
-          empty.className = 'tp-cm-empty'
-          empty.textContent = 'No threads yet. Chat for a bit, then click Organize.'
-          body.appendChild(empty)
-        } else {
-          for (const convId of allConvIds) {
-            const threads = [
-              ...(activeThreads[convId] ? [activeThreads[convId]] : []),
-              ...(threadsByConv[convId] ?? []),
-            ]
-            if (threads.length === 0) continue
-            const convTitle = threads[0]?.conversationUrl
-              ? await this.getTitleFromUrl(threads[0].conversationUrl, convId)
-              : convId.slice(0, 8)
-            body.appendChild(this.buildConvItem(convId, convTitle, threads))
-          }
-        }
+        // No groups yet — show hint to use Organize
+        const hint = document.createElement('div')
+        hint.className = 'tp-cm-empty'
+        hint.textContent = 'Click Organize ▾ to group your conversations by topic.'
+        body.appendChild(hint)
       }
     }
 
