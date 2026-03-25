@@ -107,11 +107,13 @@ export async function organizeConversations(
 Each pair has a pair_id (format: "convId_index"), Q (user question), A (assistant answer).
 
 Rules:
-1. Group ALL pairs by topic — every pair should belong to at least one group
-2. A pair can appear in multiple groups if it clearly covers multiple distinct topics
-3. Topic names: 2-5 words, same language as content
-4. Merge similar topics into one group rather than creating many small groups
-5. Return ONLY valid JSON, no explanation:
+1. Group pairs by topic — a pair belongs to the group that best matches its core subject
+2. A pair may appear in multiple groups ONLY if it genuinely covers two clearly distinct topics (rare)
+3. If two groups share several pairs or are naturally connected in the same conversation thread, MERGE them into one broader group
+4. Prefer fewer, broader groups over many narrow ones — aim for 3-6 groups total
+5. Topic names: 2-5 words, same language as content
+6. Skip pairs that don't clearly fit any meaningful group
+7. Return ONLY valid JSON, no explanation:
 {"groups": [{"name": "Topic Name", "pairs": ["id1", "id2"]}]}
 
 Q&A Pairs:
