@@ -52,5 +52,5 @@ export type BackgroundToContent =
   | { type: 'THREAD_DECISION'; newThread: boolean; title: string }
   | { type: 'THREAD_RESTORED'; conversationId: string }
   | { type: 'THREAD_RESTORE_FAILED' }
-  | { type: 'CONVERSATIONS_ORGANIZED'; groups: ConversationGroup[] }
+  | { type: 'CONVERSATIONS_ORGANIZED'; groups: ConversationGroup[]; convTitles: Record<string, string> }
   | { type: 'ORGANIZE_FAILED' }

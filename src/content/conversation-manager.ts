@@ -5,6 +5,9 @@ import {
   getAllActiveThreads,
   getConversationGroups,
   saveConversationGroups,
+  clearConversationGroups,
+  saveConvTitles,
+  getConvTitles,
 } from '../shared/storage'
 import type { ContentToBackground, BackgroundToContent } from '../shared/types'
 
@@ -291,6 +294,9 @@ export class ConversationManager {
     title.className = 'tp-cm-title'
     title.textContent = 'Conversations'
 
+    const btnGroup = document.createElement('div')
+    btnGroup.style.cssText = 'display:flex;gap:4px;align-items:center;'
+
     const organizeBtn = document.createElement('button')
     organizeBtn.className = 'tp-cm-organize-btn'
     organizeBtn.textContent = this.isOrganizing ? '…' : 'Organize ▾'
@@ -300,8 +306,33 @@ export class ConversationManager {
       this.toggleScopeMenu(organizeBtn)
     })
 
+    const clearBtn = document.createElement('button')
+    clearBtn.className = 'tp-cm-organize-btn'
+    clearBtn.textContent = '✕'
+    clearBtn.title = 'Clear organize results'
+    clearBtn.style.cssText = 'padding: 2px 6px;'
+    clearBtn.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      await clearConversationGroups()
+      this.groupExpandState.clear()
+      const existing = document.getElementById(SECTION_ID)
+      if (existing) {
+        // Build new section while old one is still in DOM, then swap in-place.
+        // Avoids doRefresh / findInjectionPoint race with React re-renders.
+        this.isRefreshing = true
+        try {
+          const newSection = await this.buildSection()
+          existing.replaceWith(newSection)
+        } finally {
+          this.isRefreshing = false
+        }
+      }
+    })
+    btnGroup.appendChild(clearBtn)
+
+    btnGroup.appendChild(organizeBtn)
     header.appendChild(title)
-    header.appendChild(organizeBtn)
+    header.appendChild(btnGroup)
     section.appendChild(header)
 
     // Body
@@ -318,8 +349,9 @@ export class ConversationManager {
       if (groups && groups.length > 0) {
         // Show organized groups
         const threadsByConv = await getThreadsByConversation()
+        const convTitles = await getConvTitles()
         for (const group of groups) {
-          body.appendChild(this.buildGroup(group, threadsByConv))
+          body.appendChild(this.buildGroup(group, threadsByConv, convTitles))
         }
       } else {
         // Show flat list of conversations that have threads
@@ -358,6 +390,7 @@ export class ConversationManager {
   private buildGroup(
     group: ConversationGroup,
     threadsByConv: Record<string, Thread[]>,
+    convTitles: Record<string, string> = {},
   ): HTMLElement {
     const container = document.createElement('div')
     container.className = 'tp-cm-group'
@@ -397,8 +430,13 @@ export class ConversationManager {
 
     for (const convId of group.ids) {
       const threads = threadsByConv[convId] ?? []
-      // Get title from the Recents DOM or from thread data
-      const convTitle = this.getTitleFromDom(convId) ?? (threads[0]?.conversationUrl ? convId.slice(0, 8) : convId.slice(0, 8))
+      // Get title: thread title first (real topic), then DOM, then stored sidebar title, then short ID
+      // Thread title is set by our extension from user messages — most accurate for restore convs
+      const convTitle =
+        threads[0]?.title ||
+        this.getTitleFromDom(convId) ||
+        convTitles[convId] ||
+        convId.slice(0, 8)
       items.appendChild(this.buildConvItem(convId, convTitle, threads))
     }
 
@@ -541,6 +579,7 @@ export class ConversationManager {
 
       if (response.type === 'CONVERSATIONS_ORGANIZED') {
         await saveConversationGroups(response.groups)
+        await saveConvTitles(response.convTitles)
       }
     } catch (err) {
       console.error('[ThreadPlugin] Organize failed:', err)
@@ -582,7 +621,9 @@ export class ConversationManager {
   }
 
   clearAndRefresh() {
+    this.isRefreshing = false
     document.getElementById(SECTION_ID)?.remove()
-    this.refresh()
+    // Use setTimeout to let the DOM settle before re-injecting
+    setTimeout(() => this.refresh(), 50)
   }
 }

@@ -109,5 +109,16 @@ export async function getConversationGroups(): Promise<ConversationGroup[] | nul
 }
 
 export async function clearConversationGroups(): Promise<void> {
-  await chrome.storage.local.remove(GROUPS_KEY)
+  await chrome.storage.local.remove([GROUPS_KEY, CONV_TITLES_KEY])
+}
+
+const CONV_TITLES_KEY = 'conv_titles'
+
+export async function saveConvTitles(titles: Record<string, string>): Promise<void> {
+  await chrome.storage.local.set({ [CONV_TITLES_KEY]: titles })
+}
+
+export async function getConvTitles(): Promise<Record<string, string>> {
+  const result = await chrome.storage.local.get(CONV_TITLES_KEY)
+  return (result[CONV_TITLES_KEY] as Record<string, string>) ?? {}
 }
