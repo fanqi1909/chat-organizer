@@ -1,4 +1,4 @@
-import type { ContentToBackground, BackgroundToContent, Message, Thread, ConversationGroup } from '../shared/types'
+import type { ContentToBackground, BackgroundToContent, Message, Thread, TopicGroup, QAPair } from '../shared/types'
 
 /**
  * Background service worker.
@@ -233,94 +233,152 @@ async function restoreThread(thread: Thread): Promise<string> {
   return conv.uuid
 }
 
+type RawMessage = {
+  sender?: string
+  role?: string
+  text?: string
+  content?: Array<{ type: string; text: string }>
+}
+
+function extractMessageText(m: RawMessage): string {
+  let text = m.text ?? m.content?.find((c) => c.type === 'text')?.text ?? ''
+  // Strip nested restore messages to get the real content
+  if (text.includes('Continuing from archived thread')) {
+    const inner = text.match(/"([^"\[\]]{3,})"/)
+    text = inner ? inner[1] : ''
+  }
+  return text.trim()
+}
+
 /**
- * Fetch the actual human messages from a claude.ai conversation.
- * Returns up to 6 human message texts, each truncated to 300 chars.
+ * Fetch Q&A pairs from a claude.ai conversation.
+ * Returns up to 8 human→assistant pairs, each question truncated to 150 chars.
  */
-async function fetchConversationMessages(
+async function fetchQAPairs(
   convId: string,
   baseUrl: string,
-): Promise<string[]> {
+): Promise<Array<{ question: string; answer: string; pairIndex: number }>> {
   try {
     const res = await fetch(`${baseUrl}/chat_conversations/${convId}`, {
       credentials: 'include',
     })
     if (!res.ok) return []
-    const data = (await res.json()) as {
-      chat_messages?: Array<{
-        sender?: string
-        role?: string
-        text?: string
-        content?: Array<{ type: string; text: string }>
-      }>
-    }
+    const data = (await res.json()) as { chat_messages?: RawMessage[] }
     const messages = data.chat_messages ?? []
-    return messages
-      .filter((m) => (m.sender ?? m.role) === 'human')
-      .slice(0, 6)
-      .map((m) => {
-        const text = m.text ?? m.content?.find((c) => c.type === 'text')?.text ?? ''
-        return text.trim().slice(0, 300)
-      })
-      .filter(Boolean)
+    const pairs: Array<{ question: string; answer: string; pairIndex: number }> = []
+    let pairIndex = 0
+    for (let i = 0; i < messages.length - 1; i++) {
+      const m = messages[i]
+      const next = messages[i + 1]
+      const sender = (m.sender ?? m.role ?? '').toLowerCase()
+      const nextSender = (next.sender ?? next.role ?? '').toLowerCase()
+      if ((sender === 'human' || sender === 'user') && nextSender === 'assistant') {
+        const q = extractMessageText(m).slice(0, 150)
+        const a = extractMessageText(next).slice(0, 100)
+        if (q) pairs.push({ question: q, answer: a, pairIndex: pairIndex++ })
+      }
+    }
+    return pairs.slice(0, 8)
   } catch {
     return []
   }
 }
 
 /**
- * Use claude.ai's internal API to group conversations by topic.
- * Fetches real message content for each conversation, then extracts and merges topics.
- * A single conversation can appear in multiple topic groups.
+ * Read an SSE stream from claude.ai's completion endpoint and return the full text.
+ */
+async function readCompletionStream(res: Response): Promise<string> {
+  const reader = res.body?.getReader()
+  if (!reader) throw new Error('No response body')
+  const decoder = new TextDecoder()
+  let fullText = ''
+  let done = false
+  while (!done) {
+    const result = await reader.read()
+    done = result.done
+    if (result.value) {
+      const chunk = decoder.decode(result.value, { stream: true })
+      for (const line of chunk.split('\n')) {
+        if (!line.startsWith('data: ')) continue
+        const raw = line.slice(6).trim()
+        if (raw === '[DONE]') { done = true; break }
+        try {
+          const parsed = JSON.parse(raw) as { completion?: string }
+          if (parsed.completion) fullText += parsed.completion
+        } catch { /* ignore parse errors */ }
+      }
+    }
+  }
+  return fullText
+}
+
+/**
+ * Use claude.ai's internal API to group Q&A pairs by topic.
+ * Fetches message pairs from each conversation, then groups them semantically.
+ * A single conversation's pairs can appear in multiple topic groups.
  */
 async function organizeConversations(
   conversations: Array<{ id: string; title: string }>,
-): Promise<ConversationGroup[]> {
+): Promise<TopicGroup[]> {
   const cookie = await chrome.cookies.get({ url: 'https://claude.ai', name: 'lastActiveOrg' })
-  const sessionCookie = await chrome.cookies.get({
-    url: 'https://claude.ai',
-    name: '__Secure-next-auth.session-token',
-  })
-  if (!sessionCookie) throw new Error('No session cookie')
-
   const orgId = cookie?.value
   const baseUrl = orgId
     ? `https://claude.ai/api/organizations/${orgId}`
     : 'https://claude.ai/api'
 
-  // Fetch real messages for each conversation in parallel
-  const convsWithContent = await Promise.all(
+  // Fetch Q&A pairs for all conversations in parallel
+  const convsWithPairs = await Promise.all(
     conversations.map(async (c) => {
-      const messages = await fetchConversationMessages(c.id, baseUrl)
-      return { ...c, messages }
+      const pairs = await fetchQAPairs(c.id, baseUrl)
+      return { ...c, pairs }
     }),
   )
 
-  const convList = convsWithContent
-    .map((c) => {
-      const content =
-        c.messages.length > 0
-          ? c.messages.map((m, i) => `  [${i + 1}] "${m}"`).join('\n')
-          : `  (no content retrieved)`
-      return `conv_id: "${c.id}"\ntitle: "${c.title}"\nmessages:\n${content}`
-    })
-    .join('\n\n---\n\n')
+  // Build flat list of all pairs with compact IDs
+  interface PairWithId {
+    pairId: string
+    convId: string
+    convTitle: string
+    question: string
+    answer: string
+    pairIndex: number
+  }
+  const allPairs: PairWithId[] = []
+  for (const conv of convsWithPairs) {
+    for (const p of conv.pairs) {
+      allPairs.push({
+        pairId: `${conv.id}_${p.pairIndex}`,
+        convId: conv.id,
+        convTitle: conv.title,
+        question: p.question,
+        answer: p.answer,
+        pairIndex: p.pairIndex,
+      })
+    }
+  }
 
-  const prompt = `You are organizing conversations by topic. Each conversation may cover multiple topics.
+  // Cap total pairs to stay within token budget (~300 pairs ≈ 21k tokens)
+  const cappedPairs = allPairs.slice(0, 300)
+  if (cappedPairs.length === 0) return []
 
-Your task:
-1. For each conversation, identify all distinct topics it covers
-2. Merge similar topics across conversations into unified topic groups
-3. A conversation should appear in EVERY topic group it is relevant to
-4. Use the same language as the conversation content for topic names
-5. Topic names should be concise (2-5 words)
-6. Create 2-8 topic groups total; put uncategorized conversations in "Other"
+  const pairList = cappedPairs
+    .map((p) => `pair_id: "${p.pairId}"\nQ: "${p.question}"\nA: "${p.answer}"`)
+    .join('\n\n')
 
-Return ONLY valid JSON, no explanation:
-{"groups": [{"name": "Topic Name", "ids": ["conv_id1", "conv_id2"]}]}
+  const prompt = `You are organizing Q&A pairs from conversations by topic.
 
-Conversations:
-${convList}`
+Each pair has a pair_id (format: "convId_index"), Q (user question), A (assistant answer).
+
+Rules:
+1. Group ALL pairs by topic — every pair should belong to at least one group
+2. A pair can appear in multiple groups if it clearly covers multiple distinct topics
+3. Topic names: 2-5 words, same language as content
+4. Merge similar topics into one group rather than creating many small groups
+5. Return ONLY valid JSON, no explanation:
+{"groups": [{"name": "Topic Name", "pairs": ["id1", "id2"]}]}
+
+Q&A Pairs:
+${pairList}`
 
   // Create throwaway conversation for classification
   const convRes = await fetch(`${baseUrl}/chat_conversations`, {
@@ -334,27 +392,50 @@ ${convList}`
 
   const msgRes = await fetch(`${baseUrl}/chat_conversations/${conv.uuid}/completion`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'accept': 'text/event-stream',
+      'anthropic-client-platform': 'web_claude_ai',
+    },
     credentials: 'include',
     body: JSON.stringify({
       prompt,
-      model: 'claude-3-5-haiku-20241022',
-      max_tokens_to_sample: 1000,
-      stream: false,
+      model: 'claude-sonnet-4-6',
+      max_tokens_to_sample: 2000,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      parent_message_uuid: '00000000-0000-4000-8000-000000000000',
+      rendering_mode: 'raw',
+      attachments: [],
+      files: [],
     }),
   })
   if (!msgRes.ok) throw new Error(`Organize API failed: ${msgRes.status}`)
 
-  const data = (await msgRes.json()) as { completion?: string; content?: Array<{ text: string }> }
-  const text = data.completion ?? data.content?.[0]?.text ?? ''
+  const text = await readCompletionStream(msgRes)
   if (!text) throw new Error('Empty response from organize API')
 
   const jsonMatch = text.match(/\{[\s\S]*\}/)
   if (!jsonMatch) throw new Error('No JSON in organize response')
 
-  const parsed = JSON.parse(jsonMatch[0]) as { groups?: ConversationGroup[] }
-  return parsed.groups ?? []
+  // Build pair lookup map for ID → QAPair expansion
+  const pairLookup = new Map(cappedPairs.map((p) => [p.pairId, p]))
+
+  const parsed = JSON.parse(jsonMatch[0]) as {
+    groups?: Array<{ name: string; pairs: string[] }>
+  }
+
+  return (parsed.groups ?? [])
+    .map((g) => ({
+      name: g.name,
+      pairs: g.pairs
+        .map((pairId): QAPair | null => {
+          const p = pairLookup.get(pairId)
+          if (!p) return null
+          return { convId: p.convId, convTitle: p.convTitle, question: p.question, pairIndex: p.pairIndex }
+        })
+        .filter((p): p is QAPair => p !== null),
+    }))
+    .filter((g) => g.pairs.length > 0)
 }
 
 /**

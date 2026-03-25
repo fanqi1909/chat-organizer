@@ -37,9 +37,16 @@ export interface PlatformAdapter {
   getSidebarConversationItems(): HTMLElement[]
 }
 
-export interface ConversationGroup {
+export interface QAPair {
+  convId: string
+  convTitle: string
+  question: string   // truncated to ~150 chars
+  pairIndex: number  // 0-based index of this Q&A in the conversation
+}
+
+export interface TopicGroup {
   name: string
-  ids: string[]
+  pairs: QAPair[]
 }
 
 // Messages passed between content script and background service worker
@@ -52,5 +59,5 @@ export type BackgroundToContent =
   | { type: 'THREAD_DECISION'; newThread: boolean; title: string }
   | { type: 'THREAD_RESTORED'; conversationId: string }
   | { type: 'THREAD_RESTORE_FAILED' }
-  | { type: 'CONVERSATIONS_ORGANIZED'; groups: ConversationGroup[] }
+  | { type: 'CONVERSATIONS_ORGANIZED'; groups: TopicGroup[] }
   | { type: 'ORGANIZE_FAILED' }

@@ -1,10 +1,8 @@
-import type { PlatformAdapter, Thread, ConversationGroup } from '../shared/types'
+import type { PlatformAdapter, Thread, TopicGroup, QAPair } from '../shared/types'
 import {
-  getArchivedThreads,
-  getThreadsByConversation,
-  getAllActiveThreads,
-  getConversationGroups,
-  saveConversationGroups,
+  getTopicGroups,
+  saveTopicGroups,
+  clearTopicGroups,
 } from '../shared/storage'
 import type { ContentToBackground, BackgroundToContent } from '../shared/types'
 
@@ -33,6 +31,24 @@ const SECTION_STYLES = `
     color: var(--text-text-500, #666);
     text-transform: uppercase;
     letter-spacing: 0.06em;
+  }
+  .tp-cm-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .tp-cm-clear-btn {
+    font-size: 11px;
+    color: var(--text-text-500, #666);
+    background: none;
+    border: none;
+    padding: 2px 6px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .tp-cm-clear-btn:hover {
+    color: var(--text-text-300, #999);
+    background: var(--bg-bg-200, rgba(255,255,255,0.05));
   }
   .tp-cm-organize-btn {
     font-size: 11px;
@@ -140,7 +156,7 @@ const SECTION_STYLES = `
     opacity: 0.5;
   }
   .tp-cm-group-items {
-    padding-left: 16px;
+    padding-left: 8px;
     display: none;
   }
   .tp-cm-group-items.expanded {
@@ -161,33 +177,44 @@ const SECTION_STYLES = `
     background: var(--bg-bg-200, rgba(255,255,255,0.05));
     color: var(--text-text-100, #fff);
   }
-  .tp-cm-conv-title {
-    flex: 1;
+  .tp-cm-pair-conv-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-text-500, #888);
+    background: var(--bg-bg-300, rgba(255,255,255,0.06));
+    border-radius: 3px;
+    padding: 1px 5px;
+    flex-shrink: 0;
+    max-width: 80px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .tp-cm-thread-sub {
-    padding-left: 12px;
-    display: none;
+  .tp-cm-pair-question {
+    flex: 1;
+    margin-left: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-text-300, #999);
+    font-size: 11px;
   }
-  .tp-cm-thread-sub.expanded {
+  .tp-cm-conv-delete {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--text-text-500, #666);
+    font-size: 10px;
+    cursor: pointer;
+    padding: 0 2px;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .tp-cm-conv-item:hover .tp-cm-conv-delete {
     display: block;
   }
-  .tp-cm-thread-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 11px;
-    color: var(--text-text-400, #777);
-    transition: background 0.1s;
-  }
-  .tp-cm-thread-item:hover {
-    background: var(--bg-bg-200, rgba(255,255,255,0.05));
-    color: var(--text-text-200, #ccc);
+  .tp-cm-conv-delete:hover {
+    color: #e55;
   }
   .tp-cm-empty {
     padding: 12px 10px;
@@ -203,7 +230,6 @@ export class ConversationManager {
   private observer: MutationObserver | null = null
   private debounceTimer: number | null = null
   private groupExpandState = new Map<string, boolean>()
-  private convExpandState = new Map<string, boolean>()
   private isOrganizing = false
   private isRefreshing = false
   private scopeMenuVisible = false
@@ -249,12 +275,10 @@ export class ConversationManager {
     for (const h2 of headings) {
       if (h2.textContent?.trim().startsWith('Recents')) {
         // Walk up to find the container of both the header div and the <ul>
-        // Structure: container > div.flex > h2 + container > ul
         const headerDiv = h2.closest('.flex.items-center.justify-between')
         if (headerDiv?.parentElement) {
           return headerDiv.parentElement
         }
-        // Fallback: go up 2 levels from h2
         return h2.parentElement?.parentElement ?? null
       }
     }
@@ -271,7 +295,6 @@ export class ConversationManager {
     this.isRefreshing = true
     try {
       const section = await this.buildSection()
-      // Re-check after async gap — another doRefresh may have injected while we awaited
       if (document.getElementById(SECTION_ID)) return
       injectionPoint.parentElement.insertBefore(section, injectionPoint)
     } finally {
@@ -291,6 +314,35 @@ export class ConversationManager {
     title.className = 'tp-cm-title'
     title.textContent = 'Conversations'
 
+    const actions = document.createElement('div')
+    actions.className = 'tp-cm-header-actions'
+
+    const groups = await getTopicGroups()
+    const hasGroups = groups && groups.length > 0
+
+    if (hasGroups) {
+      const clearBtn = document.createElement('button')
+      clearBtn.className = 'tp-cm-clear-btn'
+      clearBtn.textContent = '✕'
+      clearBtn.title = 'Clear groups'
+      clearBtn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        await clearTopicGroups()
+        this.groupExpandState.clear()
+        const existing = document.getElementById(SECTION_ID)
+        if (existing) {
+          this.isRefreshing = true
+          try {
+            const newSection = await this.buildSection()
+            existing.replaceWith(newSection)
+          } finally {
+            this.isRefreshing = false
+          }
+        }
+      })
+      actions.appendChild(clearBtn)
+    }
+
     const organizeBtn = document.createElement('button')
     organizeBtn.className = 'tp-cm-organize-btn'
     organizeBtn.textContent = this.isOrganizing ? '…' : 'Organize ▾'
@@ -300,8 +352,9 @@ export class ConversationManager {
       this.toggleScopeMenu(organizeBtn)
     })
 
+    actions.appendChild(organizeBtn)
     header.appendChild(title)
-    header.appendChild(organizeBtn)
+    header.appendChild(actions)
     section.appendChild(header)
 
     // Body
@@ -311,54 +364,24 @@ export class ConversationManager {
     if (this.isOrganizing) {
       const loading = document.createElement('div')
       loading.className = 'tp-cm-loading'
-      loading.textContent = 'Organizing conversations…'
+      loading.textContent = 'Extracting Q&A pairs…'
       body.appendChild(loading)
-    } else {
-      const groups = await getConversationGroups()
-      if (groups && groups.length > 0) {
-        // Show organized groups
-        const threadsByConv = await getThreadsByConversation()
-        for (const group of groups) {
-          body.appendChild(this.buildGroup(group, threadsByConv))
-        }
-      } else {
-        // Show flat list of conversations that have threads
-        const threadsByConv = await getThreadsByConversation()
-        const activeThreads = await getAllActiveThreads()
-        const allConvIds = new Set([
-          ...Object.keys(threadsByConv),
-          ...Object.keys(activeThreads),
-        ])
-
-        if (allConvIds.size === 0) {
-          const empty = document.createElement('div')
-          empty.className = 'tp-cm-empty'
-          empty.textContent = 'No threads yet. Chat for a bit, then click Organize.'
-          body.appendChild(empty)
-        } else {
-          for (const convId of allConvIds) {
-            const threads = [
-              ...(activeThreads[convId] ? [activeThreads[convId]] : []),
-              ...(threadsByConv[convId] ?? []),
-            ]
-            if (threads.length === 0) continue
-            const convTitle = threads[0]?.conversationUrl
-              ? await this.getTitleFromUrl(threads[0].conversationUrl, convId)
-              : convId.slice(0, 8)
-            body.appendChild(this.buildConvItem(convId, convTitle, threads))
-          }
-        }
+    } else if (hasGroups) {
+      for (const group of groups) {
+        body.appendChild(this.buildGroup(group))
       }
+    } else {
+      const empty = document.createElement('div')
+      empty.className = 'tp-cm-empty'
+      empty.textContent = 'Click Organize ▾ to group your conversations by topic.'
+      body.appendChild(empty)
     }
 
     section.appendChild(body)
     return section
   }
 
-  private buildGroup(
-    group: ConversationGroup,
-    threadsByConv: Record<string, Thread[]>,
-  ): HTMLElement {
+  private buildGroup(group: TopicGroup): HTMLElement {
     const container = document.createElement('div')
     container.className = 'tp-cm-group'
 
@@ -377,13 +400,14 @@ export class ConversationManager {
 
     const count = document.createElement('span')
     count.className = 'tp-cm-group-count'
-    count.textContent = `${group.ids.length}`
+    count.textContent = `${group.pairs.length}`
 
     groupHeader.appendChild(chevron)
     groupHeader.appendChild(name)
     groupHeader.appendChild(count)
 
-    groupHeader.addEventListener('click', () => {
+    groupHeader.addEventListener('click', (e) => {
+      e.stopPropagation()
       const expanded = !this.groupExpandState.get(group.name)
       this.groupExpandState.set(group.name, expanded)
       chevron.classList.toggle('expanded', expanded)
@@ -395,76 +419,62 @@ export class ConversationManager {
     const items = document.createElement('div')
     items.className = `tp-cm-group-items ${isExpanded ? 'expanded' : ''}`
 
-    for (const convId of group.ids) {
-      const threads = threadsByConv[convId] ?? []
-      // Get title from the Recents DOM or from thread data
-      const convTitle = this.getTitleFromDom(convId) ?? (threads[0]?.conversationUrl ? convId.slice(0, 8) : convId.slice(0, 8))
-      items.appendChild(this.buildConvItem(convId, convTitle, threads))
+    for (const pair of group.pairs) {
+      items.appendChild(this.buildPairItem(pair))
     }
 
     container.appendChild(items)
     return container
   }
 
-  private buildConvItem(convId: string, title: string, threads: Thread[]): HTMLElement {
-    const container = document.createElement('div')
-
-    const isExpanded = this.convExpandState.get(convId) ?? false
-
+  private buildPairItem(pair: QAPair): HTMLElement {
     const item = document.createElement('div')
     item.className = 'tp-cm-conv-item'
 
-    const convTitle = document.createElement('span')
-    convTitle.className = 'tp-cm-conv-title'
-    convTitle.textContent = title
+    const label = document.createElement('span')
+    label.className = 'tp-cm-pair-conv-label'
+    label.textContent = pair.convTitle
+    label.title = pair.convTitle
 
-    const count = document.createElement('span')
-    count.style.cssText = 'font-size: 10px; opacity: 0.4; flex-shrink: 0;'
-    count.textContent = threads.length > 0 ? `${threads.length}` : ''
+    const question = document.createElement('span')
+    question.className = 'tp-cm-pair-question'
+    question.textContent = pair.question
+    question.title = pair.question
 
-    item.appendChild(convTitle)
-    item.appendChild(count)
-
-    item.addEventListener('click', () => {
-      const expanded = !this.convExpandState.get(convId)
-      this.convExpandState.set(convId, expanded)
-      threadSub.classList.toggle('expanded', expanded)
+    const deleteBtn = document.createElement('button')
+    deleteBtn.className = 'tp-cm-conv-delete'
+    deleteBtn.textContent = '✕'
+    deleteBtn.title = 'Remove from group'
+    deleteBtn.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      const groups = await getTopicGroups()
+      if (groups) {
+        const updated = groups
+          .map((g) => ({
+            ...g,
+            pairs: g.pairs.filter(
+              (p) => !(p.convId === pair.convId && p.pairIndex === pair.pairIndex),
+            ),
+          }))
+          .filter((g) => g.pairs.length > 0)
+        await saveTopicGroups(updated)
+      }
+      item.remove()
     })
 
-    container.appendChild(item)
+    item.appendChild(label)
+    item.appendChild(question)
+    item.appendChild(deleteBtn)
 
-    // Thread sub-items
-    const threadSub = document.createElement('div')
-    threadSub.className = `tp-cm-thread-sub ${isExpanded ? 'expanded' : ''}`
+    item.addEventListener('click', (e) => {
+      e.stopPropagation()
+      window.location.href = `/chat/${pair.convId}`
+    })
 
-    for (const thread of threads.slice(0, 5)) {
-      const threadItem = document.createElement('div')
-      threadItem.className = 'tp-cm-thread-item'
-      threadItem.innerHTML = `<span style="opacity:0.4;font-size:10px;">#</span> <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${thread.title || 'Untitled'}</span> <span style="font-size:10px;opacity:0.4;">${thread.messages.length}m</span>`
-      threadItem.addEventListener('click', (e) => {
-        e.stopPropagation()
-        this.opts.onOpenThread(thread)
-      })
-      threadSub.appendChild(threadItem)
-    }
-
-    container.appendChild(threadSub)
-    return container
-  }
-
-  private getTitleFromDom(convId: string): string | null {
-    const link = document.querySelector(`a[href="/chat/${convId}"]`)
-    const span = link?.querySelector('.truncate')
-    return span?.textContent?.trim() ?? null
-  }
-
-  private async getTitleFromUrl(url: string, fallback: string): Promise<string> {
-    const convId = url.match(/\/chat\/([a-f0-9-]+)/)?.[1] ?? fallback
-    return this.getTitleFromDom(convId) ?? fallback
+    return item
   }
 
   private toggleScopeMenu(btn: HTMLButtonElement) {
-    // Remove existing menu if open
     const existing = document.getElementById('tp-cm-scope-menu')
     if (existing) {
       existing.remove()
@@ -498,7 +508,6 @@ export class ConversationManager {
     btn.appendChild(menu)
     this.scopeMenuVisible = true
 
-    // Close on outside click
     const closeMenu = (e: MouseEvent) => {
       if (!menu.contains(e.target as Node) && e.target !== btn) {
         menu.remove()
@@ -510,12 +519,9 @@ export class ConversationManager {
   }
 
   private async runOrganize(limit: number) {
-    // Collect conversation IDs and titles from the Recents sidebar DOM
-    // The background will fetch actual message content via the claude.ai API
     const items = this.opts.adapter.getSidebarConversationItems()
 
     const conversations: Array<{ id: string; title: string }> = []
-
     const limited = limit > 0 ? items.slice(0, limit) : items
     for (const li of limited) {
       const link = li.querySelector('a[href^="/chat/"]') as HTMLAnchorElement | null
@@ -529,9 +535,8 @@ export class ConversationManager {
 
     if (conversations.length === 0) return
 
-    // Show loading state in-place (don't remove section)
     this.isOrganizing = true
-    this.showLoadingState()
+    this.showLoadingState(conversations.length)
 
     try {
       const response = (await chrome.runtime.sendMessage({
@@ -540,28 +545,25 @@ export class ConversationManager {
       } as ContentToBackground)) as BackgroundToContent
 
       if (response.type === 'CONVERSATIONS_ORGANIZED') {
-        await saveConversationGroups(response.groups)
+        await saveTopicGroups(response.groups)
       }
     } catch (err) {
       console.error('[ThreadPlugin] Organize failed:', err)
     } finally {
       this.isOrganizing = false
-      // Re-render the section body with results
       document.getElementById(SECTION_ID)?.remove()
       this.isRefreshing = false
       await this.doRefresh()
     }
   }
 
-  private showLoadingState() {
+  private showLoadingState(convCount: number) {
     const section = document.getElementById(SECTION_ID)
     if (!section) return
 
-    // Update button
     const btn = section.querySelector('.tp-cm-organize-btn') as HTMLButtonElement | null
     if (btn) { btn.textContent = 'Organizing…'; btn.disabled = true }
 
-    // Replace body with progress bar + text
     const body = section.querySelector('.tp-cm-body')
     if (body) {
       body.innerHTML = ''
@@ -574,7 +576,7 @@ export class ConversationManager {
 
       const label = document.createElement('div')
       label.className = 'tp-cm-loading'
-      label.textContent = `Analyzing ${this.opts.adapter.getSidebarConversationItems().length} conversations…`
+      label.textContent = `Extracting Q&A pairs from ${convCount} conversations…`
 
       body.appendChild(bar)
       body.appendChild(label)

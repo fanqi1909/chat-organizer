@@ -2,7 +2,6 @@ import { getPlatformAdapter } from './platforms'
 import { ConversationManager } from './conversation-manager'
 import { MessageObserver } from './observer'
 import { ThreadManager } from './thread-manager'
-import { SidebarInjector } from './sidebar-injector'
 import { getSettings, getPendingInject, clearPendingInject, setPendingInject } from '../shared/storage'
 import type { ContentToBackground, BackgroundToContent, Message, Thread } from '../shared/types'
 
@@ -17,24 +16,9 @@ async function init() {
 
   // --- Thread Manager ---
   const threadManager = new ThreadManager({
-    onThreadUpdate: () => {
-      injector.clearInjections()
-      injector.refresh()
-    },
-    onArchive: () => {
-      injector.clearInjections()
-      injector.refresh()
-    },
+    onThreadUpdate: () => {},
+    onArchive: () => {},
   })
-
-  // --- Sidebar Injector (replaces old custom sidebar) ---
-  const injector = new SidebarInjector({
-    adapter,
-    onOpenThread: handleOpenThread,
-    getCurrentThread: () => threadManager.getCurrentThread(),
-    onArchive: () => threadManager.archiveCurrentThread(),
-  })
-  injector.start()
 
   // --- Conversation Manager ---
   const convManager = new ConversationManager({
@@ -101,8 +85,6 @@ async function init() {
   new MutationObserver(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href
-      injector.clearInjections()
-      injector.refresh()
       observer.reset()
       convManager.clearAndRefresh()
       maybeInjectPendingThread(adapter)
