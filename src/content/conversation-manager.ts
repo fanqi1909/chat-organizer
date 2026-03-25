@@ -510,12 +510,11 @@ export class ConversationManager {
   }
 
   private async runOrganize(limit: number) {
-    // Collect conversations from the Recents sidebar DOM
+    // Collect conversation IDs and titles from the Recents sidebar DOM
+    // The background will fetch actual message content via the claude.ai API
     const items = this.opts.adapter.getSidebarConversationItems()
-    const threadsByConv = await getThreadsByConversation()
-    const activeThreads = await getAllActiveThreads()
 
-    const conversations: Array<{ id: string; title: string; preview: string }> = []
+    const conversations: Array<{ id: string; title: string }> = []
 
     const limited = limit > 0 ? items.slice(0, limit) : items
     for (const li of limited) {
@@ -525,12 +524,7 @@ export class ConversationManager {
       if (!convId) continue
       const titleEl = link.querySelector('.truncate')
       const title = titleEl?.textContent?.trim() ?? convId.slice(0, 8)
-
-      // Get preview from threads or just use title
-      const threads = [...(threadsByConv[convId] ?? []), ...(activeThreads[convId] ? [activeThreads[convId]] : [])]
-      const preview = threads[0]?.messages[0]?.text?.slice(0, 100) ?? title
-
-      conversations.push({ id: convId, title, preview })
+      conversations.push({ id: convId, title })
     }
 
     if (conversations.length === 0) return

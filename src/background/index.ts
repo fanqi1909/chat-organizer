@@ -234,10 +234,47 @@ async function restoreThread(thread: Thread): Promise<string> {
 }
 
 /**
+ * Fetch the actual human messages from a claude.ai conversation.
+ * Returns up to 6 human message texts, each truncated to 300 chars.
+ */
+async function fetchConversationMessages(
+  convId: string,
+  baseUrl: string,
+): Promise<string[]> {
+  try {
+    const res = await fetch(`${baseUrl}/chat_conversations/${convId}`, {
+      credentials: 'include',
+    })
+    if (!res.ok) return []
+    const data = (await res.json()) as {
+      chat_messages?: Array<{
+        sender?: string
+        role?: string
+        text?: string
+        content?: Array<{ type: string; text: string }>
+      }>
+    }
+    const messages = data.chat_messages ?? []
+    return messages
+      .filter((m) => (m.sender ?? m.role) === 'human')
+      .slice(0, 6)
+      .map((m) => {
+        const text = m.text ?? m.content?.find((c) => c.type === 'text')?.text ?? ''
+        return text.trim().slice(0, 300)
+      })
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+/**
  * Use claude.ai's internal API to group conversations by topic.
+ * Fetches real message content for each conversation, then extracts and merges topics.
+ * A single conversation can appear in multiple topic groups.
  */
 async function organizeConversations(
-  conversations: Array<{ id: string; title: string; preview: string }>,
+  conversations: Array<{ id: string; title: string }>,
 ): Promise<ConversationGroup[]> {
   const cookie = await chrome.cookies.get({ url: 'https://claude.ai', name: 'lastActiveOrg' })
   const sessionCookie = await chrome.cookies.get({
@@ -251,14 +288,36 @@ async function organizeConversations(
     ? `https://claude.ai/api/organizations/${orgId}`
     : 'https://claude.ai/api'
 
-  const convList = conversations
-    .map((c) => `- id: "${c.id}", title: "${c.title}", preview: "${c.preview.slice(0, 100)}"`)
-    .join('\n')
+  // Fetch real messages for each conversation in parallel
+  const convsWithContent = await Promise.all(
+    conversations.map(async (c) => {
+      const messages = await fetchConversationMessages(c.id, baseUrl)
+      return { ...c, messages }
+    }),
+  )
 
-  const prompt = `Group these conversations by topic. Create 2-6 meaningful topic groups. Ungrouped conversations (if any) go into a group called "Other".
+  const convList = convsWithContent
+    .map((c) => {
+      const content =
+        c.messages.length > 0
+          ? c.messages.map((m, i) => `  [${i + 1}] "${m}"`).join('\n')
+          : `  (no content retrieved)`
+      return `conv_id: "${c.id}"\ntitle: "${c.title}"\nmessages:\n${content}`
+    })
+    .join('\n\n---\n\n')
+
+  const prompt = `You are organizing conversations by topic. Each conversation may cover multiple topics.
+
+Your task:
+1. For each conversation, identify all distinct topics it covers
+2. Merge similar topics across conversations into unified topic groups
+3. A conversation should appear in EVERY topic group it is relevant to
+4. Use the same language as the conversation content for topic names
+5. Topic names should be concise (2-5 words)
+6. Create 2-8 topic groups total; put uncategorized conversations in "Other"
 
 Return ONLY valid JSON, no explanation:
-{"groups": [{"name": "Topic Name", "ids": ["uuid1", "uuid2"]}]}
+{"groups": [{"name": "Topic Name", "ids": ["conv_id1", "conv_id2"]}]}
 
 Conversations:
 ${convList}`
@@ -280,7 +339,7 @@ ${convList}`
     body: JSON.stringify({
       prompt,
       model: 'claude-3-5-haiku-20241022',
-      max_tokens_to_sample: 500,
+      max_tokens_to_sample: 1000,
       stream: false,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     }),

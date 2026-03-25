@@ -46,7 +46,7 @@ export interface ConversationGroup {
 export type ContentToBackground =
   | { type: 'NEW_MESSAGE'; message: Message; history: Message[] }
   | { type: 'RESTORE_THREAD'; thread: Thread }
-  | { type: 'ORGANIZE_CONVERSATIONS'; conversations: Array<{ id: string; title: string; preview: string }> }
+  | { type: 'ORGANIZE_CONVERSATIONS'; conversations: Array<{ id: string; title: string }> }
 
 export type BackgroundToContent =
   | { type: 'THREAD_DECISION'; newThread: boolean; title: string }
