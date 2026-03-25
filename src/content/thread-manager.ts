@@ -1,5 +1,5 @@
 import type { Thread, Message } from '../shared/types'
-import { saveArchivedThread } from '../shared/storage'
+import { saveArchivedThread, setActiveThread, clearActiveThread } from '../shared/storage'
 
 export class ThreadManager {
   private currentThread: Thread | null = null
@@ -21,8 +21,14 @@ export class ThreadManager {
       messages: [firstMessage],
       createdAt: Date.now(),
       conversationUrl: location.href,
+      conversationId: location.pathname.match(/\/chat\/([a-f0-9-]+)/)?.[1],
     }
     this.onThreadUpdate(this.currentThread)
+    // Persist active thread so sidebar can display it for all conversations
+    const convId = this.currentThread.conversationId
+    if (convId) {
+      setActiveThread(convId, this.currentThread)
+    }
   }
 
   addMessageToCurrentThread(message: Message) {
@@ -32,6 +38,11 @@ export class ThreadManager {
     }
     this.currentThread.messages.push(message)
     this.onThreadUpdate({ ...this.currentThread })
+    // Update persisted active thread
+    const convId = this.currentThread.conversationId
+    if (convId) {
+      setActiveThread(convId, { ...this.currentThread })
+    }
   }
 
   async archiveCurrentThread() {
@@ -39,6 +50,11 @@ export class ThreadManager {
     const thread = { ...this.currentThread }
     await saveArchivedThread(thread)
     this.onArchive(thread)
+    // Clear persisted active thread
+    const convId = thread.conversationId
+    if (convId) {
+      await clearActiveThread(convId)
+    }
     this.currentThread = null
     this.onThreadUpdate(null)
   }

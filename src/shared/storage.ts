@@ -1,4 +1,4 @@
-import type { Thread } from './types'
+import type { Thread, ConversationGroup } from './types'
 
 const THREADS_KEY = 'archived_threads'
 const SETTINGS_KEY = 'settings'
@@ -52,4 +52,62 @@ export async function getPendingInject(): Promise<Thread | null> {
 
 export async function clearPendingInject(): Promise<void> {
   await chrome.storage.local.remove(PENDING_INJECT_KEY)
+}
+
+export async function getThreadsByConversation(): Promise<Record<string, Thread[]>> {
+  const threads = await getArchivedThreads()
+  const grouped: Record<string, Thread[]> = {}
+  for (const t of threads) {
+    const id = t.conversationId ?? extractConversationId(t.conversationUrl)
+    if (id) {
+      ;(grouped[id] ??= []).push(t)
+    }
+  }
+  return grouped
+}
+
+// Active thread per conversation (persisted so sidebar can show threads for all conversations)
+export async function setActiveThread(convId: string, thread: Thread): Promise<void> {
+  await chrome.storage.local.set({ [`active_thread:${convId}`]: thread })
+}
+
+export async function getActiveThread(convId: string): Promise<Thread | null> {
+  const result = await chrome.storage.local.get(`active_thread:${convId}`)
+  return (result[`active_thread:${convId}`] as Thread) ?? null
+}
+
+export async function clearActiveThread(convId: string): Promise<void> {
+  await chrome.storage.local.remove(`active_thread:${convId}`)
+}
+
+export async function getAllActiveThreads(): Promise<Record<string, Thread>> {
+  const all = await chrome.storage.local.get(null)
+  const result: Record<string, Thread> = {}
+  for (const [key, value] of Object.entries(all)) {
+    if (key.startsWith('active_thread:')) {
+      const convId = key.slice('active_thread:'.length)
+      result[convId] = value as Thread
+    }
+  }
+  return result
+}
+
+function extractConversationId(url: string): string | undefined {
+  const match = url.match(/\/chat\/([a-f0-9-]+)/)
+  return match?.[1]
+}
+
+const GROUPS_KEY = 'conversation_groups'
+
+export async function saveConversationGroups(groups: ConversationGroup[]): Promise<void> {
+  await chrome.storage.local.set({ [GROUPS_KEY]: groups })
+}
+
+export async function getConversationGroups(): Promise<ConversationGroup[] | null> {
+  const result = await chrome.storage.local.get(GROUPS_KEY)
+  return (result[GROUPS_KEY] as ConversationGroup[]) ?? null
+}
+
+export async function clearConversationGroups(): Promise<void> {
+  await chrome.storage.local.remove(GROUPS_KEY)
 }

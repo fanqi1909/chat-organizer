@@ -1,10 +1,9 @@
-import React from 'react'
-import { createRoot } from 'react-dom/client'
 import { getPlatformAdapter } from './platforms'
+import { ConversationManager } from './conversation-manager'
 import { MessageObserver } from './observer'
 import { ThreadManager } from './thread-manager'
-import { Sidebar } from './ui/sidebar'
-import { getSettings, getPendingInject, clearPendingInject } from '../shared/storage'
+import { SidebarInjector } from './sidebar-injector'
+import { getSettings, getPendingInject, clearPendingInject, setPendingInject } from '../shared/storage'
 import type { ContentToBackground, BackgroundToContent, Message, Thread } from '../shared/types'
 
 async function init() {
@@ -14,48 +13,55 @@ async function init() {
   const adapter = getPlatformAdapter()
   if (!adapter) return
 
-  // --- Check for pending thread inject (opened from archived thread click) ---
   await maybeInjectPendingThread(adapter)
-
-  // --- Sidebar (single root, re-render on state change) ---
-  const sidebarHost = document.createElement('div')
-  sidebarHost.id = 'tp-sidebar-host'
-  document.body.appendChild(sidebarHost)
-
-  const sidebarShadow = sidebarHost.attachShadow({ mode: 'open' })
-  const sidebarContainer = document.createElement('div')
-  sidebarShadow.appendChild(sidebarContainer)
-  const sidebarRoot = createRoot(sidebarContainer)
-
-  let currentThread: Thread | null = null
-  let sidebarRefreshKey = 0
-
-  function renderSidebar() {
-    sidebarRoot.render(
-      React.createElement(Sidebar, {
-        currentThread,
-        onArchive: () => threadManager.archiveCurrentThread(),
-        refreshKey: sidebarRefreshKey,
-      }),
-    )
-  }
-
-  renderSidebar()
-
-  // Push page content right to make room for sidebar
-  document.body.style.marginLeft = '260px'
 
   // --- Thread Manager ---
   const threadManager = new ThreadManager({
-    onThreadUpdate: (thread) => {
-      currentThread = thread
-      renderSidebar()
+    onThreadUpdate: () => {
+      injector.clearInjections()
+      injector.refresh()
     },
     onArchive: () => {
-      sidebarRefreshKey++
-      renderSidebar()
+      injector.clearInjections()
+      injector.refresh()
     },
   })
+
+  // --- Sidebar Injector (replaces old custom sidebar) ---
+  const injector = new SidebarInjector({
+    adapter,
+    onOpenThread: handleOpenThread,
+    getCurrentThread: () => threadManager.getCurrentThread(),
+    onArchive: () => threadManager.archiveCurrentThread(),
+  })
+  injector.start()
+
+  // --- Conversation Manager ---
+  const convManager = new ConversationManager({
+    adapter,
+    onOpenThread: handleOpenThread,
+  })
+  convManager.start()
+
+  async function handleOpenThread(thread: Thread) {
+    if (threadManager.getCurrentThread()) {
+      await threadManager.archiveCurrentThread()
+    }
+    try {
+      const response = (await chrome.runtime.sendMessage({
+        type: 'RESTORE_THREAD',
+        thread,
+      })) as BackgroundToContent
+      if (response.type === 'THREAD_RESTORED') {
+        window.location.href = `https://claude.ai/chat/${response.conversationId}`
+        return
+      }
+    } catch (err) {
+      console.warn('[ThreadPlugin] Restore failed, falling back to inject:', err)
+    }
+    await setPendingInject(thread)
+    window.location.href = 'https://claude.ai/new'
+  }
 
   // --- Message Observer ---
   const observer = new MessageObserver(adapter, async (message, history) => {
@@ -71,9 +77,16 @@ async function init() {
           if (threadManager.getCurrentThread()) {
             await threadManager.archiveCurrentThread()
           }
-          threadManager.startNewThread(response.title, message)
+          // Derive title from last human message if API didn't provide one
+          const title = response.title || deriveTitleFromHistory(history)
+          threadManager.startNewThread(title, message)
         } else {
-          threadManager.addMessageToCurrentThread(message)
+          // If no current thread yet, start one (first message in a conversation)
+          if (!threadManager.getCurrentThread()) {
+            threadManager.startNewThread(deriveTitleFromHistory(history), message)
+          } else {
+            threadManager.addMessageToCurrentThread(message)
+          }
         }
       }
     } catch (err) {
@@ -88,9 +101,11 @@ async function init() {
   new MutationObserver(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href
-      currentThread = null
-      renderSidebar()
+      injector.clearInjections()
+      injector.refresh()
       observer.reset()
+      convManager.clearAndRefresh()
+      maybeInjectPendingThread(adapter)
     }
   }).observe(document, { subtree: true, childList: true })
 }
@@ -116,11 +131,21 @@ async function maybeInjectPendingThread(
     if (input) {
       const context = buildThreadContext(thread)
       adapter.insertIntoInputBox(context)
+      setTimeout(() => adapter.submitInputBox(), 300)
     } else if (attempts++ < 20) {
       setTimeout(inject, 500)
     }
   }
   inject()
+}
+
+function deriveTitleFromHistory(history: Message[]): string {
+  // Use the last human message as the thread title
+  const lastHuman = [...history].reverse().find((m) => m.role === 'human')
+  const text = lastHuman?.text?.trim() ?? ''
+  if (!text) return 'New Thread'
+  // Truncate to ~50 chars, break at word boundary
+  return text.length > 50 ? text.slice(0, 50).replace(/\s+\S*$/, '') + '…' : text
 }
 
 function buildThreadContext(thread: Thread): string {
