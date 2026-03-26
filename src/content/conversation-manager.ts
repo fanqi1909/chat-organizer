@@ -514,8 +514,20 @@ export class ConversationManager {
           }))
           .filter((g) => g.pairs.length > 0)
         await saveTopicGroups(updated)
+        // Rebuild section from storage to avoid race with MutationObserver re-renders
+        const existing = document.getElementById(SECTION_ID)
+        if (existing) {
+          this.isRefreshing = true
+          try {
+            const newSection = await this.buildSection()
+            existing.replaceWith(newSection)
+          } finally {
+            this.isRefreshing = false
+          }
+        }
+      } else {
+        item.remove()
       }
-      item.remove()
     })
 
     item.appendChild(label)
