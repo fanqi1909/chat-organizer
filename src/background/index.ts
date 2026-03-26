@@ -255,60 +255,18 @@ async function mergeTopicGroup(groupName: string, pairs: QAPair[]): Promise<stri
 
   if (sections.length === 0) throw new Error('No content to merge')
 
-  // Step 1: Summarize Q&A pairs using a throwaway conversation
-  const rawBlocks = sections
-    .map(({ convTitle, fullPairs }) => {
-      const pairText = fullPairs
-        .map((p, i) => `[${i + 1}] Q: ${p.question}\n    A: ${p.answer}`)
-        .join('\n\n')
-      return `From "${convTitle}":\n${pairText}`
-    })
-    .join('\n\n---\n\n')
+  // Build a concise primer directly from Q&A pairs — no extra API call needed
+  const primerPairs = sections
+    .flatMap(({ fullPairs }) =>
+      fullPairs.map((p) => `• ${p.question.slice(0, 120)}\n  → ${p.answer.slice(0, 200)}`)
+    )
+    .join('\n\n')
 
-  const summarizePrompt =
-    `You are summarizing Q&A exchanges for a merged conversation session.\n\n` +
-    `Topic: "${groupName}"\n\n` +
-    `Q&A pairs:\n---\n${rawBlocks}\n---\n\n` +
-    `Write a concise summary (3-5 sentences) of the key points, decisions, and conclusions ` +
-    `from these exchanges. Focus on what was learned or resolved. Plain prose, no bullet points, no preamble.`
-
-  const summaryConvRes = await fetch(`${baseUrl}/chat_conversations`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ name: '' }),
-  })
-  if (!summaryConvRes.ok) throw new Error(`Failed to create summary conversation: ${summaryConvRes.status}`)
-  const summaryConv = (await summaryConvRes.json()) as { uuid: string }
-
-  const summaryMsgRes = await fetch(`${baseUrl}/chat_conversations/${summaryConv.uuid}/completion`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'accept': 'text/event-stream',
-      'anthropic-client-platform': 'web_claude_ai',
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      prompt: summarizePrompt,
-      model: 'claude-3-5-haiku-20241022',
-      max_tokens_to_sample: 300,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      parent_message_uuid: '00000000-0000-4000-8000-000000000000',
-      rendering_mode: 'raw',
-      attachments: [],
-      files: [],
-    }),
-  })
-  if (!summaryMsgRes.ok) throw new Error(`Summary API failed: ${summaryMsgRes.status}`)
-  const summary = (await readCompletionStream(summaryMsgRes)).trim() || rawBlocks
-
-  // Step 2: Create the real named session with the summary as primer
   const primer =
     `[Continuing: "${groupName}"]\n\n` +
-    `Here's a summary of what we've previously discussed on this topic:\n\n` +
-    `${summary}\n\n` +
-    `You're up to date on the above context. What would you like to explore next?`
+    `Here's what we've discussed on this topic:\n\n` +
+    `${primerPairs}\n\n` +
+    `You're up to date on the above. What would you like to explore next?`
 
   const convRes = await fetch(`${baseUrl}/chat_conversations`, {
     method: 'POST',
