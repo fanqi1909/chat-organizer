@@ -159,31 +159,34 @@ const SECTION_STYLES = `
     opacity: 0.5;
   }
   .tp-cm-merge-btn {
-    font-size: 10px;
-    color: var(--text-text-500, #666);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-text-400, #888);
     background: none;
-    border: none;
-    padding: 1px 4px;
+    border: 1px solid var(--border-300, rgba(255,255,255,0.12));
+    padding: 2px 8px;
     cursor: pointer;
-    border-radius: 3px;
-    opacity: 0;
-    transition: opacity 0.1s, color 0.1s;
+    border-radius: 4px;
+    opacity: 0.5;
+    transition: opacity 0.1s, color 0.1s, background 0.1s;
     flex-shrink: 0;
-    line-height: 1.4;
+    line-height: 1.6;
+    white-space: nowrap;
   }
   .tp-cm-group-header:hover .tp-cm-merge-btn {
     opacity: 1;
   }
   .tp-cm-merge-btn:hover {
     color: var(--accent-main-100, #7c3aed);
+    border-color: var(--accent-main-100, #7c3aed);
     background: var(--bg-bg-200, rgba(255,255,255,0.05));
   }
   .tp-cm-merge-btn:disabled {
-    opacity: 0.4;
+    opacity: 0.3;
     cursor: default;
   }
   .tp-cm-merged-badge {
-    font-size: 9px;
+    font-size: 10px;
     color: var(--accent-main-100, #7c3aed);
     opacity: 0.7;
     flex-shrink: 0;
@@ -450,8 +453,8 @@ export class ConversationManager {
     } else {
       const mergeBtn = document.createElement('button')
       mergeBtn.className = 'tp-cm-merge-btn'
-      mergeBtn.textContent = '⊕'
-      mergeBtn.title = `Merge "${group.name}" into a new session`
+      mergeBtn.textContent = '↗ New Session'
+      mergeBtn.title = `Open "${group.name}" as a new session with summarized context`
       mergeBtn.addEventListener('click', (e) => {
         e.stopPropagation()
         this.runMerge(group.name, group.pairs, mergeBtn)
@@ -588,7 +591,7 @@ export class ConversationManager {
 
   private async runMerge(groupName: string, pairs: QAPair[], btn: HTMLButtonElement) {
     btn.disabled = true
-    btn.textContent = '…'
+    btn.textContent = 'Opening…'
 
     try {
       const response = (await chrome.runtime.sendMessage({
@@ -602,12 +605,12 @@ export class ConversationManager {
         window.location.href = `/chat/${response.conversationId}`
       } else {
         console.error('[ThreadPlugin] Merge failed')
-        btn.textContent = '⊕'
+        btn.textContent = '↗ New Session'
         btn.disabled = false
       }
     } catch (err) {
       console.error('[ThreadPlugin] Merge error:', err)
-      btn.textContent = '⊕'
+      btn.textContent = '↗ New Session'
       btn.disabled = false
     }
   }
