@@ -287,7 +287,7 @@ async function mergeTopicGroup(groupName: string, pairs: QAPair[]): Promise<stri
     credentials: 'include',
     body: JSON.stringify({
       prompt: primer,
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-sonnet-4-6',
       max_tokens_to_sample: 200,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       parent_message_uuid: '00000000-0000-4000-8000-000000000000',
