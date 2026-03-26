@@ -1,4 +1,5 @@
 import type { ContentToBackground, BackgroundToContent, Message, Thread, TopicGroup, QAPair } from '../shared/types'
+import { getTopicGroups } from '../shared/storage'
 
 /**
  * Background service worker.
@@ -527,10 +528,17 @@ async function organizeConversations(
     .map((p) => `pair_id: "${p.pairId}"\nQ: "${p.question}"\nA: "${p.answer}"`)
     .join('\n\n')
 
+  // Fetch existing group names so the AI can reuse them (enables exact-match merge)
+  const existingGroups = await getTopicGroups()
+  const existingNames = (existingGroups ?? []).map((g) => g.name)
+  const existingNamesSection = existingNames.length > 0
+    ? `\nExisting group names (reuse EXACTLY if the topic matches — do not paraphrase):\n${existingNames.map((n) => `- "${n}"`).join('\n')}\n`
+    : ''
+
   const prompt = `You are organizing Q&A pairs from conversations by topic.
 
 Each pair has a pair_id (format: "convId_index"), Q (user question), A (assistant answer).
-
+${existingNamesSection}
 Rules:
 1. Group ALL pairs by topic — every pair should belong to at least one group
 2. A pair can appear in multiple groups if it clearly covers multiple distinct topics
