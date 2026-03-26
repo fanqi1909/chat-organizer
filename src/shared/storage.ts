@@ -103,6 +103,37 @@ export async function saveTopicGroups(groups: TopicGroup[]): Promise<void> {
   await chrome.storage.local.set({ [GROUPS_KEY]: groups })
 }
 
+/**
+ * Smart-merge new groups into existing ones:
+ * - Same name → merge pairs, deduplicate by convId+pairIndex
+ * - New name → append as a new group
+ * - Existing groups not present in newGroups are kept as-is
+ */
+export async function mergeTopicGroups(newGroups: TopicGroup[]): Promise<void> {
+  const existing = await getTopicGroups() ?? []
+  const merged = [...existing]
+
+  for (const newGroup of newGroups) {
+    const idx = merged.findIndex((g) => g.name === newGroup.name)
+    if (idx >= 0) {
+      const existingKeys = new Set(
+        merged[idx].pairs.map((p) => `${p.convId}_${p.pairIndex}`)
+      )
+      const dedupedPairs = newGroup.pairs.filter(
+        (p) => !existingKeys.has(`${p.convId}_${p.pairIndex}`)
+      )
+      merged[idx] = {
+        ...merged[idx],
+        pairs: [...merged[idx].pairs, ...dedupedPairs],
+      }
+    } else {
+      merged.push(newGroup)
+    }
+  }
+
+  await chrome.storage.local.set({ [GROUPS_KEY]: merged })
+}
+
 export async function getTopicGroups(): Promise<TopicGroup[] | null> {
   const result = await chrome.storage.local.get(GROUPS_KEY)
   return (result[GROUPS_KEY] as TopicGroup[]) ?? null

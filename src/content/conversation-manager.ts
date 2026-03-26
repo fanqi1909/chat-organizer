@@ -2,6 +2,7 @@ import type { PlatformAdapter, Thread, TopicGroup, QAPair } from '../shared/type
 import {
   getTopicGroups,
   saveTopicGroups,
+  mergeTopicGroups,
   clearTopicGroups,
   getMergedGroups,
   addMergedGroup,
@@ -626,7 +627,7 @@ export class ConversationManager {
       } as ContentToBackground)) as BackgroundToContent
 
       if (response.type === 'CONVERSATIONS_ORGANIZED') {
-        await saveTopicGroups(response.groups)
+        await mergeTopicGroups(response.groups)
       }
     } catch (err) {
       console.error('[ThreadPlugin] Organize failed:', err)
