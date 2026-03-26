@@ -111,3 +111,20 @@ export async function getTopicGroups(): Promise<TopicGroup[] | null> {
 export async function clearTopicGroups(): Promise<void> {
   await chrome.storage.local.remove(GROUPS_KEY)
 }
+
+const MERGED_GROUPS_KEY = 'merged_groups'
+
+export async function getMergedGroups(): Promise<Set<string>> {
+  const result = await chrome.storage.local.get(MERGED_GROUPS_KEY)
+  return new Set((result[MERGED_GROUPS_KEY] as string[]) ?? [])
+}
+
+export async function addMergedGroup(groupName: string): Promise<void> {
+  const merged = await getMergedGroups()
+  merged.add(groupName)
+  await chrome.storage.local.set({ [MERGED_GROUPS_KEY]: [...merged] })
+}
+
+export async function clearMergedGroups(): Promise<void> {
+  await chrome.storage.local.remove(MERGED_GROUPS_KEY)
+}

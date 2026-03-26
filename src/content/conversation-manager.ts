@@ -3,6 +3,8 @@ import {
   getTopicGroups,
   saveTopicGroups,
   clearTopicGroups,
+  getMergedGroups,
+  addMergedGroup,
 } from '../shared/storage'
 import type { ContentToBackground, BackgroundToContent } from '../shared/types'
 
@@ -178,6 +180,13 @@ const SECTION_STYLES = `
   .tp-cm-merge-btn:disabled {
     opacity: 0.4;
     cursor: default;
+  }
+  .tp-cm-merged-badge {
+    font-size: 9px;
+    color: var(--accent-main-100, #7c3aed);
+    opacity: 0.7;
+    flex-shrink: 0;
+    line-height: 1.4;
   }
   .tp-cm-group-items {
     padding-left: 8px;
@@ -391,8 +400,9 @@ export class ConversationManager {
       loading.textContent = 'Extracting Q&A pairs…'
       body.appendChild(loading)
     } else if (hasGroups) {
+      const mergedGroups = await getMergedGroups()
       for (const group of groups) {
-        body.appendChild(this.buildGroup(group))
+        body.appendChild(this.buildGroup(group, mergedGroups))
       }
     } else {
       const empty = document.createElement('div')
@@ -405,11 +415,12 @@ export class ConversationManager {
     return section
   }
 
-  private buildGroup(group: TopicGroup): HTMLElement {
+  private buildGroup(group: TopicGroup, mergedGroups: Set<string> = new Set()): HTMLElement {
     const container = document.createElement('div')
     container.className = 'tp-cm-group'
 
     const isExpanded = this.groupExpandState.get(group.name) ?? false
+    const isMerged = mergedGroups.has(group.name)
 
     const groupHeader = document.createElement('div')
     groupHeader.className = 'tp-cm-group-header'
@@ -426,19 +437,29 @@ export class ConversationManager {
     count.className = 'tp-cm-group-count'
     count.textContent = `${group.pairs.length}`
 
-    const mergeBtn = document.createElement('button')
-    mergeBtn.className = 'tp-cm-merge-btn'
-    mergeBtn.textContent = '⊕'
-    mergeBtn.title = `Merge "${group.name}" into a new session`
-    mergeBtn.addEventListener('click', (e) => {
-      e.stopPropagation()
-      this.runMerge(group.name, group.pairs, mergeBtn)
-    })
-
-    groupHeader.appendChild(chevron)
-    groupHeader.appendChild(name)
-    groupHeader.appendChild(count)
-    groupHeader.appendChild(mergeBtn)
+    if (isMerged) {
+      const badge = document.createElement('span')
+      badge.className = 'tp-cm-merged-badge'
+      badge.textContent = '✓'
+      badge.title = 'Already merged into a session'
+      groupHeader.appendChild(chevron)
+      groupHeader.appendChild(name)
+      groupHeader.appendChild(count)
+      groupHeader.appendChild(badge)
+    } else {
+      const mergeBtn = document.createElement('button')
+      mergeBtn.className = 'tp-cm-merge-btn'
+      mergeBtn.textContent = '⊕'
+      mergeBtn.title = `Merge "${group.name}" into a new session`
+      mergeBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.runMerge(group.name, group.pairs, mergeBtn)
+      })
+      groupHeader.appendChild(chevron)
+      groupHeader.appendChild(name)
+      groupHeader.appendChild(count)
+      groupHeader.appendChild(mergeBtn)
+    }
 
     groupHeader.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -564,6 +585,7 @@ export class ConversationManager {
       } as ContentToBackground)) as BackgroundToContent
 
       if (response.type === 'TOPIC_MERGED') {
+        await addMergedGroup(groupName)
         window.location.href = `/chat/${response.conversationId}`
       } else {
         console.error('[ThreadPlugin] Merge failed')
