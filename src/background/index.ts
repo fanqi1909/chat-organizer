@@ -49,7 +49,7 @@ chrome.runtime.onMessage.addListener(
         })
         .catch((err) => {
           console.error('[ThreadPlugin] Merge failed:', err)
-          const response: BackgroundToContent = { type: 'MERGE_FAILED' }
+          const response: BackgroundToContent = { type: 'MERGE_FAILED', reason: String(err) }
           sendResponse(response)
         })
       return true

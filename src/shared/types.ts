@@ -63,4 +63,4 @@ export type BackgroundToContent =
   | { type: 'CONVERSATIONS_ORGANIZED'; groups: TopicGroup[] }
   | { type: 'ORGANIZE_FAILED' }
   | { type: 'TOPIC_MERGED'; conversationId: string }
-  | { type: 'MERGE_FAILED' }
+  | { type: 'MERGE_FAILED'; reason?: string }

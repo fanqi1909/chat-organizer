@@ -604,14 +604,25 @@ export class ConversationManager {
         await addMergedGroup(groupName)
         window.location.href = `/chat/${response.conversationId}`
       } else {
-        console.error('[ThreadPlugin] Merge failed')
-        btn.textContent = '↗ New Session'
-        btn.disabled = false
+        const reason = response.type === 'MERGE_FAILED' ? (response.reason ?? 'unknown error') : 'unknown'
+        console.error('[ThreadPlugin] Merge failed:', reason)
+        btn.textContent = `✗ ${reason.slice(0, 40)}`
+        btn.style.color = '#e55'
+        setTimeout(() => {
+          btn.textContent = '↗ New Session'
+          btn.style.color = ''
+          btn.disabled = false
+        }, 4000)
       }
     } catch (err) {
       console.error('[ThreadPlugin] Merge error:', err)
-      btn.textContent = '↗ New Session'
-      btn.disabled = false
+      btn.textContent = `✗ ${String(err).slice(0, 40)}`
+      btn.style.color = '#e55'
+      setTimeout(() => {
+        btn.textContent = '↗ New Session'
+        btn.style.color = ''
+        btn.disabled = false
+      }, 4000)
     }
   }
 
