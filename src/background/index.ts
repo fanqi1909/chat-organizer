@@ -438,7 +438,8 @@ async function fetchQAPairs(
       if ((sender === 'human' || sender === 'user') && nextSender === 'assistant') {
         const q = extractMessageText(m).slice(0, 150)
         const a = extractMessageText(next).slice(0, 100)
-        if (q) pairs.push({ question: q, answer: a, pairIndex: pairIndex++ })
+        if (q) pairs.push({ question: q, answer: a, pairIndex })
+        pairIndex++ // always increment to stay in sync with mergeTopicGroup's counter
       }
     }
     return pairs.slice(0, 8)
@@ -540,11 +541,12 @@ async function organizeConversations(
 Each pair has a pair_id (format: "convId_index"), Q (user question), A (assistant answer).
 ${existingNamesSection}
 Rules:
-1. Group ALL pairs by topic — every pair should belong to at least one group
-2. A pair can appear in multiple groups if it clearly covers multiple distinct topics
-3. Topic names: 2-5 words, same language as content
-4. Merge similar topics into one group rather than creating many small groups
-5. Return ONLY valid JSON, no explanation:
+1. Group pairs by their PRIMARY topic. Pairs that don't clearly fit any topic go into a group named "Other".
+2. IMPORTANT: Pairs from the SAME conversation must be split into different groups if they cover different topics. Do NOT group all pairs from one conversation together.
+3. A pair can appear in multiple groups only if it genuinely covers two clearly distinct topics.
+4. Topic names: 2-5 words, same language as content.
+5. Merge similar topics into one group rather than creating many small groups.
+6. Return ONLY valid JSON, no explanation:
 {"groups": [{"name": "Topic Name", "pairs": ["id1", "id2"]}]}
 
 Q&A Pairs:
