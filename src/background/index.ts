@@ -40,6 +40,20 @@ chrome.runtime.onMessage.addListener(
       return true
     }
 
+    if (msg.type === 'MERGE_TOPIC') {
+      mergeTopicGroup(msg.groupName, msg.pairs)
+        .then((conversationId) => {
+          const response: BackgroundToContent = { type: 'TOPIC_MERGED', conversationId }
+          sendResponse(response)
+        })
+        .catch((err) => {
+          console.error('[ThreadPlugin] Merge failed:', err)
+          const response: BackgroundToContent = { type: 'MERGE_FAILED' }
+          sendResponse(response)
+        })
+      return true
+    }
+
     if (msg.type === 'NEW_MESSAGE') {
       const tabId = sender.tab?.id
       if (tabId === undefined) return
@@ -179,6 +193,117 @@ Respond with ONLY valid JSON in this exact format:
     newThread: parsed.newThread ?? false,
     title: parsed.title ?? '',
   }
+}
+
+/**
+ * Merge selected Q&A pairs from one or more conversations into a new session.
+ * Re-fetches full message text (up to 600/1000 chars) for richer context,
+ * then creates a named conversation and sends a formatted history primer.
+ * Returns the new conversation UUID.
+ */
+async function mergeTopicGroup(groupName: string, pairs: QAPair[]): Promise<string> {
+  const cookie = await chrome.cookies.get({ url: 'https://claude.ai', name: 'lastActiveOrg' })
+  const orgId = cookie?.value
+  const baseUrl = orgId
+    ? `https://claude.ai/api/organizations/${orgId}`
+    : 'https://claude.ai/api'
+
+  // Group requested pairIndexes by convId so we fetch each conversation once
+  const pairsByConv = new Map<string, { convTitle: string; indexes: Set<number> }>()
+  for (const pair of pairs) {
+    if (!pairsByConv.has(pair.convId)) {
+      pairsByConv.set(pair.convId, { convTitle: pair.convTitle, indexes: new Set() })
+    }
+    pairsByConv.get(pair.convId)!.indexes.add(pair.pairIndex)
+  }
+
+  // Fetch full text for each conversation and filter to requested pairs
+  interface FullPair { question: string; answer: string }
+  const sections: Array<{ convTitle: string; fullPairs: FullPair[] }> = []
+
+  for (const [convId, { convTitle, indexes }] of pairsByConv) {
+    try {
+      const res = await fetch(`${baseUrl}/chat_conversations/${convId}`, {
+        credentials: 'include',
+      })
+      if (!res.ok) continue
+      const data = (await res.json()) as { chat_messages?: RawMessage[] }
+      const messages = data.chat_messages ?? []
+
+      const fullPairs: FullPair[] = []
+      let pairIndex = 0
+      for (let i = 0; i < messages.length - 1; i++) {
+        const m = messages[i]
+        const next = messages[i + 1]
+        const sender = (m.sender ?? m.role ?? '').toLowerCase()
+        const nextSender = (next.sender ?? next.role ?? '').toLowerCase()
+        if ((sender === 'human' || sender === 'user') && nextSender === 'assistant') {
+          if (indexes.has(pairIndex)) {
+            const q = extractMessageText(m).slice(0, 600)
+            const a = extractMessageText(next).slice(0, 1000)
+            if (q) fullPairs.push({ question: q, answer: a })
+          }
+          pairIndex++
+        }
+      }
+      if (fullPairs.length > 0) sections.push({ convTitle, fullPairs })
+    } catch {
+      // Skip conversations that fail to fetch
+    }
+  }
+
+  if (sections.length === 0) throw new Error('No content to merge')
+
+  // Build the context primer message
+  const contextBlocks = sections
+    .map(({ convTitle, fullPairs }) => {
+      const pairText = fullPairs
+        .map((p) => `Q: ${p.question}\nA: ${p.answer}`)
+        .join('\n\n')
+      return `[From "${convTitle}"]\n${pairText}`
+    })
+    .join('\n\n---\n\n')
+
+  const prompt =
+    `[Merged session: "${groupName}"]\n\n` +
+    `The following Q&A exchanges from previous conversations have been merged into this session:\n\n` +
+    `---\n${contextBlocks}\n---\n\n` +
+    `Please briefly acknowledge (1-2 sentences) the topics covered above, then wait for my next message.`
+
+  // Create new named conversation
+  const convRes = await fetch(`${baseUrl}/chat_conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ name: groupName }),
+  })
+  if (!convRes.ok) throw new Error(`Failed to create conversation: ${convRes.status}`)
+  const conv = (await convRes.json()) as { uuid: string }
+
+  // Send primer and wait for Claude's acknowledgment
+  const msgRes = await fetch(`${baseUrl}/chat_conversations/${conv.uuid}/completion`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'accept': 'text/event-stream',
+      'anthropic-client-platform': 'web_claude_ai',
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      prompt,
+      model: 'claude-3-5-haiku-20241022',
+      max_tokens_to_sample: 200,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      parent_message_uuid: '00000000-0000-4000-8000-000000000000',
+      rendering_mode: 'raw',
+      attachments: [],
+      files: [],
+    }),
+  })
+  if (!msgRes.ok) throw new Error(`Merge completion failed: ${msgRes.status}`)
+
+  await readCompletionStream(msgRes)
+  return conv.uuid
 }
 
 /**

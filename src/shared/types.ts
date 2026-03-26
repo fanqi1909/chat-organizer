@@ -54,6 +54,7 @@ export type ContentToBackground =
   | { type: 'NEW_MESSAGE'; message: Message; history: Message[] }
   | { type: 'RESTORE_THREAD'; thread: Thread }
   | { type: 'ORGANIZE_CONVERSATIONS'; conversations: Array<{ id: string; title: string }> }
+  | { type: 'MERGE_TOPIC'; groupName: string; pairs: QAPair[] }
 
 export type BackgroundToContent =
   | { type: 'THREAD_DECISION'; newThread: boolean; title: string }
@@ -61,3 +62,5 @@ export type BackgroundToContent =
   | { type: 'THREAD_RESTORE_FAILED' }
   | { type: 'CONVERSATIONS_ORGANIZED'; groups: TopicGroup[] }
   | { type: 'ORGANIZE_FAILED' }
+  | { type: 'TOPIC_MERGED'; conversationId: string }
+  | { type: 'MERGE_FAILED' }

@@ -155,6 +155,30 @@ const SECTION_STYLES = `
     font-size: 10px;
     opacity: 0.5;
   }
+  .tp-cm-merge-btn {
+    font-size: 10px;
+    color: var(--text-text-500, #666);
+    background: none;
+    border: none;
+    padding: 1px 4px;
+    cursor: pointer;
+    border-radius: 3px;
+    opacity: 0;
+    transition: opacity 0.1s, color 0.1s;
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+  .tp-cm-group-header:hover .tp-cm-merge-btn {
+    opacity: 1;
+  }
+  .tp-cm-merge-btn:hover {
+    color: var(--accent-main-100, #7c3aed);
+    background: var(--bg-bg-200, rgba(255,255,255,0.05));
+  }
+  .tp-cm-merge-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
   .tp-cm-group-items {
     padding-left: 8px;
     display: none;
@@ -402,9 +426,19 @@ export class ConversationManager {
     count.className = 'tp-cm-group-count'
     count.textContent = `${group.pairs.length}`
 
+    const mergeBtn = document.createElement('button')
+    mergeBtn.className = 'tp-cm-merge-btn'
+    mergeBtn.textContent = '⊕'
+    mergeBtn.title = `Merge "${group.name}" into a new session`
+    mergeBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.runMerge(group.name, group.pairs, mergeBtn)
+    })
+
     groupHeader.appendChild(chevron)
     groupHeader.appendChild(name)
     groupHeader.appendChild(count)
+    groupHeader.appendChild(mergeBtn)
 
     groupHeader.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -516,6 +550,31 @@ export class ConversationManager {
       }
     }
     setTimeout(() => document.addEventListener('click', closeMenu), 0)
+  }
+
+  private async runMerge(groupName: string, pairs: QAPair[], btn: HTMLButtonElement) {
+    btn.disabled = true
+    btn.textContent = '…'
+
+    try {
+      const response = (await chrome.runtime.sendMessage({
+        type: 'MERGE_TOPIC',
+        groupName,
+        pairs,
+      } as ContentToBackground)) as BackgroundToContent
+
+      if (response.type === 'TOPIC_MERGED') {
+        window.location.href = `/chat/${response.conversationId}`
+      } else {
+        console.error('[ThreadPlugin] Merge failed')
+        btn.textContent = '⊕'
+        btn.disabled = false
+      }
+    } catch (err) {
+      console.error('[ThreadPlugin] Merge error:', err)
+      btn.textContent = '⊕'
+      btn.disabled = false
+    }
   }
 
   private async runOrganize(limit: number) {
