@@ -26,7 +26,7 @@ const SECTION_STYLES = `
     padding: 6px 8px 4px 10px;
   }
   .tp-cm-title {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-text-500, #666);
     text-transform: uppercase;
@@ -38,11 +38,11 @@ const SECTION_STYLES = `
     gap: 4px;
   }
   .tp-cm-clear-btn {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-text-500, #666);
     background: none;
     border: none;
-    padding: 2px 6px;
+    padding: 3px 6px;
     cursor: pointer;
     border-radius: 4px;
   }
@@ -51,13 +51,13 @@ const SECTION_STYLES = `
     background: var(--bg-bg-200, rgba(255,255,255,0.05));
   }
   .tp-cm-organize-btn {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text-text-400, #888);
     background: none;
     border: 1px solid var(--border-300, rgba(255,255,255,0.1));
     border-radius: 5px;
-    padding: 2px 8px;
+    padding: 3px 10px;
     cursor: pointer;
     transition: all 0.1s;
     position: relative;
