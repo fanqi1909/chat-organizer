@@ -306,8 +306,21 @@ export class ConversationManager {
     document.head.appendChild(style)
   }
 
+  /** Return the URL path for a conversation, platform-aware. */
+  private convPath(id: string): string {
+    return this.opts.adapter.name === 'chatgpt' ? `/c/${id}` : `/chat/${id}`
+  }
+
   private findInjectionPoint(): Element | null {
-    // Find the Recents h2 heading
+    if (this.opts.adapter.name === 'chatgpt') {
+      // ChatGPT: inject before the conversation <ol> inside <nav>
+      const nav = document.querySelector('nav')
+      if (!nav) return null
+      const ol = nav.querySelector('ol')
+      return ol ?? null
+    }
+
+    // Claude: Find the Recents h2 heading
     const headings = document.querySelectorAll('h2[role="button"]')
     for (const h2 of headings) {
       if (h2.textContent?.trim().startsWith('Recents')) {
@@ -539,7 +552,7 @@ export class ConversationManager {
 
     item.addEventListener('click', (e) => {
       e.stopPropagation()
-      window.location.href = `/chat/${pair.convId}`
+      window.location.href = this.convPath(pair.convId)
     })
 
     return item
@@ -598,11 +611,12 @@ export class ConversationManager {
         type: 'MERGE_TOPIC',
         groupName,
         pairs,
+        platform: this.opts.adapter.name,
       } as ContentToBackground)) as BackgroundToContent
 
       if (response.type === 'TOPIC_MERGED') {
         await addMergedGroup(groupName)
-        window.location.href = `/chat/${response.conversationId}`
+        window.location.href = this.convPath(response.conversationId)
       } else {
         const reason = response.type === 'MERGE_FAILED' ? (response.reason ?? 'unknown error') : 'unknown'
         console.error('[ThreadPlugin] Merge failed:', reason)
@@ -632,12 +646,13 @@ export class ConversationManager {
     const conversations: Array<{ id: string; title: string }> = []
     const limited = limit > 0 ? items.slice(0, limit) : items
     for (const li of limited) {
-      const link = li.querySelector('a[href^="/chat/"]') as HTMLAnchorElement | null
+      const link = li.querySelector('a[href^="/chat/"], a[href^="/c/"]') as HTMLAnchorElement | null
       if (!link) continue
-      const convId = link.getAttribute('href')?.match(/\/chat\/([a-f0-9-]+)/)?.[1]
+      const convId = link.getAttribute('href')?.match(/\/(?:chat|c)\/([a-f0-9-]+)/)?.[1]
       if (!convId) continue
-      const titleEl = link.querySelector('.truncate')
-      const title = titleEl?.textContent?.trim() ?? convId.slice(0, 8)
+      // Try .truncate first (Claude), then any direct text content (ChatGPT)
+      const titleEl = link.querySelector('.truncate') ?? link.querySelector('[class*="truncate"]')
+      const title = titleEl?.textContent?.trim() ?? link.textContent?.trim() ?? convId.slice(0, 8)
       conversations.push({ id: convId, title })
     }
 
@@ -650,6 +665,7 @@ export class ConversationManager {
       const response = (await chrome.runtime.sendMessage({
         type: 'ORGANIZE_CONVERSATIONS',
         conversations,
+        platform: this.opts.adapter.name,
       } as ContentToBackground)) as BackgroundToContent
 
       if (response.type === 'CONVERSATIONS_ORGANIZED') {

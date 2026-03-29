@@ -9,25 +9,38 @@ async function init() {
   const settings = await getSettings()
   if (!settings.threadingEnabled) return
 
-  const adapter = getPlatformAdapter()
-  if (!adapter) return
+  const adapterOrNull = getPlatformAdapter()
+  if (!adapterOrNull) return
+  const adapter = adapterOrNull
 
-  await maybeInjectPendingThread(adapter)
-
-  // --- Thread Manager ---
-  const threadManager = new ThreadManager({
-    onThreadUpdate: () => {},
-    onArchive: () => {},
-  })
-
-  // --- Conversation Manager ---
+  // --- Conversation Manager (all platforms) ---
   const convManager = new ConversationManager({
     adapter,
     onOpenThread: handleOpenThread,
   })
   convManager.start()
 
+  // --- Claude-only: threading, message observation, pending thread injection ---
+  let observer: MessageObserver | null = null
+  let threadManager: ThreadManager | null = null
+
+  if (adapter.name === 'claude') {
+    await maybeInjectPendingThread(adapter)
+
+    threadManager = new ThreadManager({
+      onThreadUpdate: () => {},
+      onArchive: () => {},
+    })
+
+    observer = new MessageObserver(adapter, async (message, history) => {
+      await sendForDetection(message, history)
+    })
+    observer.start()
+  }
+
   async function handleOpenThread(thread: Thread) {
+    // Only relevant for Claude threading
+    if (adapter.name !== 'claude' || !threadManager) return
     if (threadManager.getCurrentThread()) {
       await threadManager.archiveCurrentThread()
     }
@@ -47,12 +60,8 @@ async function init() {
     window.location.href = 'https://claude.ai/new'
   }
 
-  // --- Message Observer ---
-  const observer = new MessageObserver(adapter, async (message, history) => {
-    await sendForDetection(message, history)
-  })
-
   async function sendForDetection(message: Message, history: Message[]) {
+    if (!threadManager) return
     const request: ContentToBackground = { type: 'NEW_MESSAGE', message, history }
     try {
       const response = (await chrome.runtime.sendMessage(request)) as BackgroundToContent
@@ -78,16 +87,14 @@ async function init() {
     }
   }
 
-  observer.start()
-
-  // Reset on SPA navigation
+  // Reset on SPA navigation (all platforms)
   let lastUrl = location.href
   new MutationObserver(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href
-      observer.reset()
+      if (observer) observer.reset()
       convManager.clearAndRefresh()
-      maybeInjectPendingThread(adapter)
+      if (adapter.name === 'claude') maybeInjectPendingThread(adapter)
     }
   }).observe(document, { subtree: true, childList: true })
 }

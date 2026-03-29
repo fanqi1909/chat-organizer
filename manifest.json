@@ -6,7 +6,7 @@
   "permissions": ["storage", "cookies", "tabs"],
   "host_permissions": [
     "https://claude.ai/*",
-    "https://chat.openai.com/*"
+    "https://chatgpt.com/*"
   ],
   "background": {
     "service_worker": "src/background/index.ts",
@@ -14,7 +14,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://claude.ai/*", "https://chat.openai.com/*"],
+      "matches": ["https://claude.ai/*", "https://chatgpt.com/*"],
       "js": ["src/content/index.ts"],
       "run_at": "document_idle"
     }

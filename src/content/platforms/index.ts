@@ -6,7 +6,7 @@ const adapters: PlatformAdapter[] = [claudeAdapter, chatgptAdapter]
 
 const hostToAdapter: Record<string, PlatformAdapter> = {
   'claude.ai': claudeAdapter,
-  'chat.openai.com': chatgptAdapter,
+  'chatgpt.com': chatgptAdapter,
 }
 
 export function getPlatformAdapter(): PlatformAdapter | null {

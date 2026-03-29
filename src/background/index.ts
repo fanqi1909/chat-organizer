@@ -1,5 +1,6 @@
 import type { ContentToBackground, BackgroundToContent, Message, Thread, TopicGroup, QAPair } from '../shared/types'
 import { getTopicGroups } from '../shared/storage'
+import * as chatgptApi from './platforms/chatgpt-api'
 
 /**
  * Background service worker.
@@ -28,7 +29,7 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (msg.type === 'ORGANIZE_CONVERSATIONS') {
-      organizeConversations(msg.conversations)
+      organizeConversations(msg.conversations, msg.platform)
         .then((groups) => {
           const response: BackgroundToContent = { type: 'CONVERSATIONS_ORGANIZED', groups }
           sendResponse(response)
@@ -42,7 +43,7 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (msg.type === 'MERGE_TOPIC') {
-      mergeTopicGroup(msg.groupName, msg.pairs)
+      mergeTopicGroup(msg.groupName, msg.pairs, msg.platform)
         .then((conversationId) => {
           const response: BackgroundToContent = { type: 'TOPIC_MERGED', conversationId }
           sendResponse(response)
@@ -202,12 +203,10 @@ Respond with ONLY valid JSON in this exact format:
  * then creates a named conversation and sends a formatted history primer.
  * Returns the new conversation UUID.
  */
-async function mergeTopicGroup(groupName: string, pairs: QAPair[]): Promise<string> {
-  const cookie = await chrome.cookies.get({ url: 'https://claude.ai', name: 'lastActiveOrg' })
-  const orgId = cookie?.value
-  const baseUrl = orgId
-    ? `https://claude.ai/api/organizations/${orgId}`
-    : 'https://claude.ai/api'
+async function mergeTopicGroup(groupName: string, pairs: QAPair[], platform = 'claude'): Promise<string> {
+  // Build primer from Q&A pairs
+  interface FullPair { question: string; answer: string }
+  const sections: Array<{ convTitle: string; fullPairs: FullPair[] }> = []
 
   // Group requested pairIndexes by convId so we fetch each conversation once
   const pairsByConv = new Map<string, { convTitle: string; indexes: Set<number> }>()
@@ -218,9 +217,55 @@ async function mergeTopicGroup(groupName: string, pairs: QAPair[]): Promise<stri
     pairsByConv.get(pair.convId)!.indexes.add(pair.pairIndex)
   }
 
-  // Fetch full text for each conversation and filter to requested pairs
-  interface FullPair { question: string; answer: string }
-  const sections: Array<{ convTitle: string; fullPairs: FullPair[] }> = []
+  if (platform === 'chatgpt') {
+    // Fetch full text via ChatGPT API
+    for (const [convId, { convTitle, indexes }] of pairsByConv) {
+      try {
+        const messages = await chatgptApi.fetchConversationMessages(convId)
+        const fullPairs: FullPair[] = []
+        let pairIndex = 0
+        for (let i = 0; i < messages.length - 1; i++) {
+          const m = messages[i]
+          const next = messages[i + 1]
+          if (m.role === 'user' && next.role === 'assistant') {
+            if (indexes.has(pairIndex)) {
+              const q = m.text.slice(0, 600)
+              const a = next.text.slice(0, 1000)
+              if (q) fullPairs.push({ question: q, answer: a })
+            }
+            pairIndex++
+          }
+        }
+        if (fullPairs.length > 0) sections.push({ convTitle, fullPairs })
+      } catch {
+        // Skip conversations that fail to fetch
+      }
+    }
+
+    if (sections.length === 0) throw new Error('No content to merge')
+
+    const primerPairs = sections
+      .flatMap(({ fullPairs }) =>
+        fullPairs.map((p) => `• ${p.question.slice(0, 120)}\n  → ${p.answer.slice(0, 200)}`)
+      )
+      .join('\n\n')
+
+    const primer =
+      `[Continuing: "${groupName}"]\n\n` +
+      `Here's what we've discussed on this topic:\n\n` +
+      `${primerPairs}\n\n` +
+      `You're up to date on the above. What would you like to explore next?`
+
+    const { conversationId } = await chatgptApi.createConversationAndSend(primer)
+    return conversationId
+  }
+
+  // Claude path
+  const cookie = await chrome.cookies.get({ url: 'https://claude.ai', name: 'lastActiveOrg' })
+  const orgId = cookie?.value
+  const baseUrl = orgId
+    ? `https://claude.ai/api/organizations/${orgId}`
+    : 'https://claude.ai/api'
 
   for (const [convId, { convTitle, indexes }] of pairsByConv) {
     try {
@@ -441,6 +486,7 @@ async function readCompletionStream(res: Response): Promise<string> {
  */
 async function organizeConversations(
   conversations: Array<{ id: string; title: string }>,
+  platform = 'claude',
 ): Promise<TopicGroup[]> {
   const cookie = await chrome.cookies.get({ url: 'https://claude.ai', name: 'lastActiveOrg' })
   const orgId = cookie?.value
@@ -451,7 +497,9 @@ async function organizeConversations(
   // Fetch Q&A pairs for all conversations in parallel
   const convsWithPairs = await Promise.all(
     conversations.map(async (c) => {
-      const pairs = await fetchQAPairs(c.id, baseUrl)
+      const pairs = platform === 'chatgpt'
+        ? await chatgptApi.fetchQAPairs(c.id)
+        : await fetchQAPairs(c.id, baseUrl)
       return { ...c, pairs }
     }),
   )
@@ -511,37 +559,42 @@ Q&A Pairs:
 ${pairList}`
 
   // Create throwaway conversation for classification
-  const convRes = await fetch(`${baseUrl}/chat_conversations`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ name: '' }),
-  })
-  if (!convRes.ok) throw new Error(`Failed to create conversation: ${convRes.status}`)
-  const conv = (await convRes.json()) as { uuid: string }
+  let text: string
+  if (platform === 'chatgpt') {
+    const result = await chatgptApi.createConversationAndSend(prompt)
+    text = result.text
+  } else {
+    const convRes = await fetch(`${baseUrl}/chat_conversations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ name: '' }),
+    })
+    if (!convRes.ok) throw new Error(`Failed to create conversation: ${convRes.status}`)
+    const conv = (await convRes.json()) as { uuid: string }
 
-  const msgRes = await fetch(`${baseUrl}/chat_conversations/${conv.uuid}/completion`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'accept': 'text/event-stream',
-      'anthropic-client-platform': 'web_claude_ai',
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      prompt,
-      model: 'claude-sonnet-4-6',
-      max_tokens_to_sample: 2000,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      parent_message_uuid: '00000000-0000-4000-8000-000000000000',
-      rendering_mode: 'raw',
-      attachments: [],
-      files: [],
-    }),
-  })
-  if (!msgRes.ok) throw new Error(`Organize API failed: ${msgRes.status}`)
-
-  const text = await readCompletionStream(msgRes)
+    const msgRes = await fetch(`${baseUrl}/chat_conversations/${conv.uuid}/completion`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'accept': 'text/event-stream',
+        'anthropic-client-platform': 'web_claude_ai',
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        prompt,
+        model: 'claude-sonnet-4-6',
+        max_tokens_to_sample: 2000,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        parent_message_uuid: '00000000-0000-4000-8000-000000000000',
+        rendering_mode: 'raw',
+        attachments: [],
+        files: [],
+      }),
+    })
+    if (!msgRes.ok) throw new Error(`Organize API failed: ${msgRes.status}`)
+    text = await readCompletionStream(msgRes)
+  }
   if (!text) throw new Error('Empty response from organize API')
 
   const jsonMatch = text.match(/\{[\s\S]*\}/)

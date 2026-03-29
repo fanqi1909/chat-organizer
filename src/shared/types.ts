@@ -53,8 +53,8 @@ export interface TopicGroup {
 export type ContentToBackground =
   | { type: 'NEW_MESSAGE'; message: Message; history: Message[] }
   | { type: 'RESTORE_THREAD'; thread: Thread }
-  | { type: 'ORGANIZE_CONVERSATIONS'; conversations: Array<{ id: string; title: string }> }
-  | { type: 'MERGE_TOPIC'; groupName: string; pairs: QAPair[] }
+  | { type: 'ORGANIZE_CONVERSATIONS'; conversations: Array<{ id: string; title: string }>; platform: string }
+  | { type: 'MERGE_TOPIC'; groupName: string; pairs: QAPair[]; platform: string }
 
 export type BackgroundToContent =
   | { type: 'THREAD_DECISION'; newThread: boolean; title: string }

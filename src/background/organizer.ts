@@ -1,5 +1,6 @@
 import type { TopicGroup, QAPair } from '../shared/types'
 import { getOrgId, buildBaseUrl, createConversation, sendCompletion } from './platforms/claude-api'
+import * as chatgptApi from './platforms/chatgpt-api'
 import { tokenize } from './topic-detector'
 
 type RawMessage = {
@@ -29,12 +30,17 @@ function extractMessageText(m: RawMessage): string {
 
 /**
  * Fetch Q&A pairs from a conversation.
+ * Dispatches to the correct platform API based on the platform param.
  * Returns up to 8 human→assistant pairs, each question truncated to 150 chars.
  */
 export async function fetchQAPairs(
   convId: string,
   baseUrl: string,
+  platform = 'claude',
 ): Promise<Array<{ question: string; answer: string; pairIndex: number }>> {
+  if (platform === 'chatgpt') {
+    return chatgptApi.fetchQAPairs(convId)
+  }
   try {
     const res = await fetch(`${baseUrl}/chat_conversations/${convId}`, {
       credentials: 'include',
@@ -136,13 +142,14 @@ export function mergeByNameSimilarity(
  */
 export async function organizeConversations(
   conversations: Array<{ id: string; title: string }>,
+  platform = 'claude',
 ): Promise<TopicGroup[]> {
   const orgId = await getOrgId()
   const baseUrl = buildBaseUrl(orgId)
 
   const convsWithPairs = await Promise.all(
     conversations.map(async (c) => {
-      const pairs = await fetchQAPairs(c.id, baseUrl)
+      const pairs = await fetchQAPairs(c.id, baseUrl, platform)
       return { ...c, pairs }
     }),
   )
@@ -181,8 +188,14 @@ Rules:
 Pairs:
 ${pairList}`
 
-  const convUuid = await createConversation(baseUrl)
-  const text = await sendCompletion(baseUrl, convUuid, prompt)
+  let text: string
+  if (platform === 'chatgpt') {
+    const result = await chatgptApi.createConversationAndSend(prompt)
+    text = result.text
+  } else {
+    const convUuid = await createConversation(baseUrl)
+    text = await sendCompletion(baseUrl, convUuid, prompt)
+  }
   if (!text) throw new Error('Empty response from organize API')
 
   const jsonMatch = text.match(/\{[\s\S]*\}/)
