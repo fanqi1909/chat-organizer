@@ -7,13 +7,12 @@ import type { ContentToBackground, BackgroundToContent, Message, Thread } from '
 
 async function init() {
   const settings = await getSettings()
-  if (!settings.threadingEnabled) return
 
   const adapterOrNull = getPlatformAdapter()
   if (!adapterOrNull) return
   const adapter = adapterOrNull
 
-  // --- Conversation Manager (all platforms) ---
+  // --- Conversation Manager (all platforms, no threading required) ---
   const convManager = new ConversationManager({
     adapter,
     onOpenThread: handleOpenThread,
@@ -24,7 +23,7 @@ async function init() {
   let observer: MessageObserver | null = null
   let threadManager: ThreadManager | null = null
 
-  if (adapter.name === 'claude') {
+  if (adapter.name === 'claude' && settings.threadingEnabled) {
     await maybeInjectPendingThread(adapter)
 
     threadManager = new ThreadManager({
