@@ -44,23 +44,20 @@ export const chatgptAdapter: PlatformAdapter = {
   },
 
   /**
-   * Find ChatGPT's conversation list container.
-   * ChatGPT renders conversations in an <ol> inside <nav>.
+   * Find ChatGPT's conversation list <ul>.
+   * ChatGPT renders all conversations in: nav > div[class*=sidebar-expando-section] > #history > ul
    */
   getSidebarRecentsList(): HTMLElement | null {
-    const nav = document.querySelector('nav')
-    if (!nav) return null
-    // ChatGPT puts conversation list in an <ol> inside nav
-    const ol = nav.querySelector('ol')
-    return (ol as HTMLElement | null)
+    return document.querySelector('#history ul') as HTMLElement | null
   },
 
   /**
    * Get all conversation <li> items from the sidebar.
+   * ChatGPT renders them as direct <li> children of #history > ul (no date grouping at li level).
    */
   getSidebarConversationItems(): HTMLElement[] {
-    const list = this.getSidebarRecentsList()
-    if (!list) return []
-    return Array.from(list.querySelectorAll(':scope > li')) as HTMLElement[]
+    const ul = this.getSidebarRecentsList()
+    if (!ul) return []
+    return Array.from(ul.querySelectorAll(':scope > li')) as HTMLElement[]
   },
 }

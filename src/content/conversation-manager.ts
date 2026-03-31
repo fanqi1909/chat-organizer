@@ -313,11 +313,12 @@ export class ConversationManager {
 
   private findInjectionPoint(): Element | null {
     if (this.opts.adapter.name === 'chatgpt') {
-      // ChatGPT: inject before the conversation <ol> inside <nav>
-      const nav = document.querySelector('nav')
-      if (!nav) return null
-      const ol = nav.querySelector('ol')
-      return ol ?? null
+      // ChatGPT: inject before the expando section containing #history
+      // Structure: nav > div.group/sidebar-expando-section > #history > ul
+      const history = document.querySelector('#history')
+      if (!history) return null
+      // Walk up to find the direct child of nav that contains #history
+      return history.closest('nav > div') ?? null
     }
 
     // Claude: Find the Recents h2 heading
