@@ -627,54 +627,75 @@ type PairWithId = {
 
 /**
  * Heuristic topic clustering for ChatGPT (no API required).
- * Uses greedy single-linkage clustering with Jaccard token overlap.
- * Group names derived from the most frequent non-stopword tokens in each cluster.
+ *
+ * Strategy: keyword-based grouping on question text only.
+ * 1. Extract "topic tokens" from each question (non-stopword, length ≥ 4).
+ * 2. Count how often each token appears across all questions.
+ * 3. Each pair's "primary topic token" = the most globally-frequent topic token
+ *    found in its question. This pulls all "github" questions into one group, etc.
+ * 4. Pairs sharing no frequent token fall into "Other".
  */
 function heuristicOrganize(allPairs: PairWithId[]): TopicGroup[] {
   const STOP = new Set([
     'the', 'and', 'for', 'what', 'how', 'can', 'this', 'that', 'with',
     'from', 'are', 'you', 'have', 'use', 'using', 'need', 'want', 'get',
     'your', 'not', 'but', 'its', 'was', 'will', 'when', 'out', 'also',
+    'just', 'more', 'some', 'been', 'they', 'them', 'then', 'than',
+    'into', 'like', 'make', 'does', 'did', 'any', 'all', 'has', 'had',
   ])
 
-  const clusters: Array<{ tokens: Set<string>; pairs: PairWithId[] }> = []
+  // Step 1: collect question key tokens per pair (length ≥ 4, not a stop word)
+  const pairKeys: Array<string[]> = allPairs.map((p) =>
+    tokenize(p.question).filter((t) => !STOP.has(t) && t.length >= 4)
+  )
 
-  for (const pair of allPairs) {
-    const pairTokens = new Set(tokenize(pair.question + ' ' + pair.answer))
-    let bestIdx = -1
-    let bestSim = 0
-
-    for (let i = 0; i < clusters.length; i++) {
-      const c = clusters[i]
-      const inter = [...pairTokens].filter((t) => c.tokens.has(t)).length
-      const union = c.tokens.size + pairTokens.size - inter
-      const sim = union > 0 ? inter / union : 0
-      if (sim > bestSim) { bestSim = sim; bestIdx = i }
-    }
-
-    if (bestSim >= 0.12 && bestIdx >= 0) {
-      // Expand the cluster centroid with this pair's tokens
-      pairTokens.forEach((t) => clusters[bestIdx].tokens.add(t))
-      clusters[bestIdx].pairs.push(pair)
-    } else {
-      clusters.push({ tokens: new Set(pairTokens), pairs: [pair] })
+  // Step 2: global token frequency across all questions
+  const globalFreq = new Map<string, number>()
+  for (const keys of pairKeys) {
+    for (const t of keys) {
+      globalFreq.set(t, (globalFreq.get(t) ?? 0) + 1)
     }
   }
 
-  return clusters.map(({ pairs }) => {
-    // Pick the top 3 most-frequent non-stopword question tokens as the group name
-    const freq = new Map<string, number>()
+  // Step 3: assign each pair to its most globally-frequent key token
+  // (ties broken by token alphabetical order for stability)
+  const groups = new Map<string, PairWithId[]>()
+  for (let i = 0; i < allPairs.length; i++) {
+    const keys = pairKeys[i]
+    // Only consider tokens that appear in ≥2 questions (otherwise too unique to group)
+    const candidates = keys.filter((t) => (globalFreq.get(t) ?? 0) >= 2)
+    let best = candidates.length > 0
+      ? candidates.reduce((a, b) => (globalFreq.get(b)! > globalFreq.get(a)! ? b : a))
+      : null
+
+    const label = best ?? 'Other'
+    if (!groups.has(label)) groups.set(label, [])
+    groups.get(label)!.push(allPairs[i])
+  }
+
+  // Step 4: build result, move singletons without a real label into "Other"
+  const result: TopicGroup[] = []
+  const otherPairs: PairWithId[] = []
+
+  for (const [label, pairs] of groups) {
+    if (label === 'Other') {
+      otherPairs.push(...pairs)
+      continue
+    }
+    // Build a 2-3 word group name: take the label plus its most co-occurring peer token
+    const peerFreq = new Map<string, number>()
     for (const p of pairs) {
-      for (const t of tokenize(p.question)) {
-        if (!STOP.has(t) && t.length > 2) freq.set(t, (freq.get(t) ?? 0) + 1)
+      const idx = allPairs.indexOf(p)
+      for (const t of pairKeys[idx]) {
+        if (t !== label && !STOP.has(t) && t.length >= 4) {
+          peerFreq.set(t, (peerFreq.get(t) ?? 0) + 1)
+        }
       }
     }
-    const topTokens = [...freq.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([t]) => t)
-    const name = topTokens.join(' ') || 'Other'
-    return {
+    const topPeer = [...peerFreq.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+    const name = topPeer && peerFreq.get(topPeer)! >= 2 ? `${label} ${topPeer}` : label
+
+    result.push({
       name,
       pairs: pairs.map((p) => ({
         convId: p.convId,
@@ -682,8 +703,22 @@ function heuristicOrganize(allPairs: PairWithId[]): TopicGroup[] {
         question: p.question,
         pairIndex: p.pairIndex,
       })),
-    }
-  }).filter((g) => g.pairs.length > 0)
+    })
+  }
+
+  if (otherPairs.length > 0) {
+    result.push({
+      name: 'Other',
+      pairs: otherPairs.map((p) => ({
+        convId: p.convId,
+        convTitle: p.convTitle,
+        question: p.question,
+        pairIndex: p.pairIndex,
+      })),
+    })
+  }
+
+  return result.filter((g) => g.pairs.length > 0)
 }
 
 /**
