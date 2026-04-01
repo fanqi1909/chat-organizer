@@ -525,11 +525,6 @@ async function organizeConversations(
   const cappedPairs = allPairs.slice(0, 300)
   if (cappedPairs.length === 0) return []
 
-  // ChatGPT: write API blocked by Turnstile in service worker — use heuristic clustering
-  if (platform === 'chatgpt') {
-    return heuristicOrganize(cappedPairs)
-  }
-
   const pairList = cappedPairs
     .map((p) => `pair_id: "${p.pairId}"\nQ: "${p.question}"\nA: "${p.answer}"`)
     .join('\n\n')
@@ -558,7 +553,29 @@ Q&A Pairs:
 ${pairList}`
 
   let text: string
-  {
+
+  if (platform === 'chatgpt') {
+    // Relay classification through the ChatGPT tab's content script → MAIN world relay.
+    // The relay uses cached sentinel tokens (Turnstile, PoW) from ChatGPT's own requests.
+    // Falls back to heuristic clustering if no active ChatGPT tab or tokens not cached.
+    try {
+      const [tab] = await chrome.tabs.query({ url: 'https://chatgpt.com/*' })
+      if (!tab?.id) throw new Error('No ChatGPT tab found')
+
+      const result = await chrome.tabs.sendMessage(tab.id, {
+        type: 'CLASSIFY_VIA_PAGE',
+        prompt,
+      }) as { text?: string; error?: string }
+
+      if (result.error) throw new Error(result.error)
+      if (!result.text) throw new Error('Empty response from ChatGPT relay')
+      text = result.text
+    } catch (relayErr) {
+      console.warn('[ThreadPlugin] ChatGPT relay failed, falling back to heuristic:', relayErr)
+      return heuristicOrganize(cappedPairs)
+    }
+  } else {
+    // Claude path: create throwaway conversation for classification
     const convRes = await fetch(`${baseUrl}/chat_conversations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

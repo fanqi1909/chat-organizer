@@ -5,6 +5,46 @@ import { ThreadManager } from './thread-manager'
 import { getSettings, getPendingInject, clearPendingInject, setPendingInject } from '../shared/storage'
 import type { ContentToBackground, BackgroundToContent, Message, Thread } from '../shared/types'
 
+/**
+ * Bridge: background service worker can ask us to classify via the page's
+ * MAIN world relay (chatgpt-relay.ts) which has cached sentinel tokens.
+ */
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'CLASSIFY_VIA_PAGE' && msg.prompt) {
+    classifyViaPage(msg.prompt)
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ error: String(err) }))
+    return true // async
+  }
+})
+
+async function classifyViaPage(prompt: string): Promise<{ text?: string; conversationId?: string; error?: string }> {
+  const requestId = crypto.randomUUID()
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      window.removeEventListener('message', handler)
+      reject(new Error('ChatGPT classify timeout (30s). Make sure you have sent at least one message in ChatGPT first.'))
+    }, 30000)
+
+    const handler = (event: MessageEvent) => {
+      if (
+        event.data?.type === 'TP_CHATGPT_CLASSIFY_RESULT' &&
+        event.data.requestId === requestId
+      ) {
+        window.removeEventListener('message', handler)
+        clearTimeout(timeout)
+        if (event.data.error) {
+          reject(new Error(event.data.error))
+        } else {
+          resolve({ text: event.data.text, conversationId: event.data.conversationId })
+        }
+      }
+    }
+    window.addEventListener('message', handler)
+    window.postMessage({ type: 'TP_CHATGPT_CLASSIFY', prompt, requestId }, '*')
+  })
+}
+
 async function init() {
   const settings = await getSettings()
 
