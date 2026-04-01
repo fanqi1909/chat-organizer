@@ -254,10 +254,12 @@ async function mergeTopicGroup(groupName: string, pairs: QAPair[], platform = 'c
       `[Continuing: "${groupName}"]\n\n` +
       `Here's what we've discussed on this topic:\n\n` +
       `${primerPairs}\n\n` +
-      `You're up to date on the above. What would you like to explore next?`
+      `---\nPlease acknowledge the above context, then ask what I'd like to explore next.`
 
-    const { conversationId } = await chatgptApi.createConversationAndSend(primer)
-    return conversationId
+    // ChatGPT write API is blocked by Turnstile in the service worker.
+    // Store the primer in storage; the content script will inject it on the next new-chat page.
+    await chrome.storage.local.set({ pending_chatgpt_merge: primer })
+    return 'new'
   }
 
   // Claude path
@@ -505,14 +507,6 @@ async function organizeConversations(
   )
 
   // Build flat list of all pairs with compact IDs
-  interface PairWithId {
-    pairId: string
-    convId: string
-    convTitle: string
-    question: string
-    answer: string
-    pairIndex: number
-  }
   const allPairs: PairWithId[] = []
   for (const conv of convsWithPairs) {
     for (const p of conv.pairs) {
@@ -530,6 +524,11 @@ async function organizeConversations(
   // Cap total pairs to stay within token budget (~300 pairs ≈ 21k tokens)
   const cappedPairs = allPairs.slice(0, 300)
   if (cappedPairs.length === 0) return []
+
+  // ChatGPT: write API blocked by Turnstile in service worker — use heuristic clustering
+  if (platform === 'chatgpt') {
+    return heuristicOrganize(cappedPairs)
+  }
 
   const pairList = cappedPairs
     .map((p) => `pair_id: "${p.pairId}"\nQ: "${p.question}"\nA: "${p.answer}"`)
@@ -558,9 +557,6 @@ Rules:
 Q&A Pairs:
 ${pairList}`
 
-  // Create throwaway conversation for classification.
-  // Always use Claude API — ChatGPT's API requires Turnstile + Proof-of-Work
-  // which cannot be completed inside a service worker.
   let text: string
   {
     const convRes = await fetch(`${baseUrl}/chat_conversations`, {
@@ -618,6 +614,76 @@ ${pairList}`
         .filter((p): p is QAPair => p !== null),
     }))
     .filter((g) => g.pairs.length > 0)
+}
+
+type PairWithId = {
+  pairId: string
+  convId: string
+  convTitle: string
+  question: string
+  answer: string
+  pairIndex: number
+}
+
+/**
+ * Heuristic topic clustering for ChatGPT (no API required).
+ * Uses greedy single-linkage clustering with Jaccard token overlap.
+ * Group names derived from the most frequent non-stopword tokens in each cluster.
+ */
+function heuristicOrganize(allPairs: PairWithId[]): TopicGroup[] {
+  const STOP = new Set([
+    'the', 'and', 'for', 'what', 'how', 'can', 'this', 'that', 'with',
+    'from', 'are', 'you', 'have', 'use', 'using', 'need', 'want', 'get',
+    'your', 'not', 'but', 'its', 'was', 'will', 'when', 'out', 'also',
+  ])
+
+  const clusters: Array<{ tokens: Set<string>; pairs: PairWithId[] }> = []
+
+  for (const pair of allPairs) {
+    const pairTokens = new Set(tokenize(pair.question + ' ' + pair.answer))
+    let bestIdx = -1
+    let bestSim = 0
+
+    for (let i = 0; i < clusters.length; i++) {
+      const c = clusters[i]
+      const inter = [...pairTokens].filter((t) => c.tokens.has(t)).length
+      const union = c.tokens.size + pairTokens.size - inter
+      const sim = union > 0 ? inter / union : 0
+      if (sim > bestSim) { bestSim = sim; bestIdx = i }
+    }
+
+    if (bestSim >= 0.12 && bestIdx >= 0) {
+      // Expand the cluster centroid with this pair's tokens
+      pairTokens.forEach((t) => clusters[bestIdx].tokens.add(t))
+      clusters[bestIdx].pairs.push(pair)
+    } else {
+      clusters.push({ tokens: new Set(pairTokens), pairs: [pair] })
+    }
+  }
+
+  return clusters.map(({ pairs }) => {
+    // Pick the top 3 most-frequent non-stopword question tokens as the group name
+    const freq = new Map<string, number>()
+    for (const p of pairs) {
+      for (const t of tokenize(p.question)) {
+        if (!STOP.has(t) && t.length > 2) freq.set(t, (freq.get(t) ?? 0) + 1)
+      }
+    }
+    const topTokens = [...freq.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([t]) => t)
+    const name = topTokens.join(' ') || 'Other'
+    return {
+      name,
+      pairs: pairs.map((p) => ({
+        convId: p.convId,
+        convTitle: p.convTitle,
+        question: p.question,
+        pairIndex: p.pairIndex,
+      })),
+    }
+  }).filter((g) => g.pairs.length > 0)
 }
 
 /**

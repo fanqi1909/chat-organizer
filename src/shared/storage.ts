@@ -97,6 +97,21 @@ function extractConversationId(url: string): string | undefined {
   return match?.[1]
 }
 
+const PENDING_CHATGPT_MERGE_KEY = 'pending_chatgpt_merge'
+
+export async function setPendingChatgptMerge(text: string): Promise<void> {
+  await chrome.storage.local.set({ [PENDING_CHATGPT_MERGE_KEY]: text })
+}
+
+export async function getPendingChatgptMerge(): Promise<string | null> {
+  const result = await chrome.storage.local.get(PENDING_CHATGPT_MERGE_KEY)
+  return (result[PENDING_CHATGPT_MERGE_KEY] as string) ?? null
+}
+
+export async function clearPendingChatgptMerge(): Promise<void> {
+  await chrome.storage.local.remove(PENDING_CHATGPT_MERGE_KEY)
+}
+
 const GROUPS_KEY = 'topic_groups'
 
 export async function saveTopicGroups(groups: TopicGroup[]): Promise<void> {

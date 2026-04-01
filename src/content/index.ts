@@ -94,6 +94,7 @@ async function init() {
       if (observer) observer.reset()
       convManager.clearAndRefresh()
       if (adapter.name === 'claude') maybeInjectPendingThread(adapter)
+      if (adapter.name === 'chatgpt') maybeInjectChatgptMerge(adapter)
     }
   }).observe(document, { subtree: true, childList: true })
 }
@@ -134,6 +135,35 @@ function deriveTitleFromHistory(history: Message[]): string {
   if (!text) return 'New Thread'
   // Truncate to ~50 chars, break at word boundary
   return text.length > 50 ? text.slice(0, 50).replace(/\s+\S*$/, '') + '…' : text
+}
+
+/**
+ * If a ChatGPT merge was triggered, inject the primer text into the input box
+ * so the user can start a new conversation from the merged topic context.
+ * Does NOT auto-submit — the primer is long and the user should review it first.
+ */
+async function maybeInjectChatgptMerge(
+  adapter: ReturnType<typeof getPlatformAdapter>,
+) {
+  if (!adapter) return
+
+  const result = await chrome.storage.local.get('pending_chatgpt_merge')
+  const text = result['pending_chatgpt_merge'] as string | undefined
+  if (!text) return
+
+  await chrome.storage.local.remove('pending_chatgpt_merge')
+
+  let attempts = 0
+  const inject = () => {
+    const input = adapter.getInputBox()
+    if (input) {
+      adapter.insertIntoInputBox(text)
+      // Don't auto-submit — user reviews primer and presses Enter
+    } else if (attempts++ < 20) {
+      setTimeout(inject, 500)
+    }
+  }
+  inject()
 }
 
 function buildThreadContext(thread: Thread): string {

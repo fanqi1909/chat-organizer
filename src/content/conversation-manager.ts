@@ -617,7 +617,15 @@ export class ConversationManager {
 
       if (response.type === 'TOPIC_MERGED') {
         await addMergedGroup(groupName)
-        window.location.href = this.convPath(response.conversationId)
+        const convId = response.conversationId
+        if (convId === 'new') {
+          // ChatGPT merge: primer stored in storage, navigate to new chat for injection
+          window.location.href = this.opts.adapter.name === 'chatgpt'
+            ? 'https://chatgpt.com/'
+            : 'https://claude.ai/new'
+        } else {
+          window.location.href = this.convPath(convId)
+        }
       } else {
         const reason = response.type === 'MERGE_FAILED' ? (response.reason ?? 'unknown error') : 'unknown'
         console.error('[ThreadPlugin] Merge failed:', reason)
