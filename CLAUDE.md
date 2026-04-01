@@ -107,3 +107,15 @@ User-triggered (not automatic). Flow:
 - **CJK tokenization**: Standard `\W+` split fails for Chinese (all chars are non-word). Use character bigrams for semantic overlap detection.
 - **Thread title from human message**: Derive title from last human message text (truncate to 50 chars), not from API (which returns generic titles like "Conversation").
 - **isRefreshing flag**: async `buildSection()` + concurrent MutationObserver callbacks = double injection. Guard with `isRefreshing` boolean + post-await re-check.
+
+### ChatGPT Platform Lessons (April 2026)
+
+- **Platform logic should be symmetric**: ChatGPT and Claude share the same organize/merge UX — only the transport differs. Keep the two-phase pipeline (AI labels pairs → code groups by label) identical across platforms; swap only the API call layer.
+- **Heuristic token length filter must include CJK**: A `>= 4` character filter silently drops all CJK bigrams (2 chars) and short English keywords. Use `>= 2` for any multi-language codebase.
+- **Keyword-frequency grouping beats Jaccard on question text**: Full-text Jaccard similarity dilutes topical signal with stop words. Counting the globally most-frequent tokens across all questions and grouping by the highest-frequency shared token produces much tighter clusters.
+- **ChatGPT's write API requires three sentinel tokens**: Bearer token (fetchable), Chat-Requirements token (fetchable), and a Cloudflare Turnstile token (not fetchable — embedded in ChatGPT's proprietary JS bundle). The old `/backend-api/conversation` endpoint has been joined by `/backend-api/f/conversation`; both require the same sentinel stack.
+- **`Object.defineProperty` getter/setter trap survives fetch re-patching**: ChatGPT's own JS reassigns `window.fetch` after page load, overwriting a simple wrapper. Using `Object.defineProperty` with a setter that re-wraps the new value keeps the interceptor alive regardless of how many times fetch is reassigned.
+- **Sentinel tokens are single-use**: Even when successfully intercepted, replaying cached Turnstile/PoW/Requirements tokens yields 403 "Unusual activity detected". Token caching + replay is not a viable path.
+- **MAIN world script must run at `document_start`**: Injecting at `document_idle` is too late — ChatGPT's app JS has already cached its own `fetch` reference by then. Only `run_at: "document_start"` + `world: "MAIN"` guarantees the interceptor is in place before any app code runs.
+- **Pending-inject pattern for cross-page flows**: When a background action needs to start a new conversation (e.g. merge → new ChatGPT chat), store the content in `chrome.storage.local`, navigate to the new-conversation URL, and have the content script inject it on arrival. Cleaner than trying to open and script a new tab programmatically.
+- **Heuristic as a honest fallback, not a goal**: The heuristic organizer is deliberately kept as a fallback for when AI classification is unavailable. Don't over-invest in heuristic quality — a future OpenAI API key option (Option B in findings doc) will supersede it entirely.
