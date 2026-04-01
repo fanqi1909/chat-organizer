@@ -644,9 +644,13 @@ function heuristicOrganize(allPairs: PairWithId[]): TopicGroup[] {
     'into', 'like', 'make', 'does', 'did', 'any', 'all', 'has', 'had',
   ])
 
-  // Step 1: collect question key tokens per pair (length ≥ 4, not a stop word)
+  // Step 1: collect question key tokens per pair.
+  // tokenize() already yields:
+  //   - Latin words of length ≥ 3
+  //   - CJK single chars (length 1) and bigrams (length 2)
+  // Keep length ≥ 2 so Chinese bigrams and short English words like "doh" are included.
   const pairKeys: Array<string[]> = allPairs.map((p) =>
-    tokenize(p.question).filter((t) => !STOP.has(t) && t.length >= 4)
+    tokenize(p.question).filter((t) => !STOP.has(t) && t.length >= 2)
   )
 
   // Step 2: global token frequency across all questions
@@ -687,7 +691,7 @@ function heuristicOrganize(allPairs: PairWithId[]): TopicGroup[] {
     for (const p of pairs) {
       const idx = allPairs.indexOf(p)
       for (const t of pairKeys[idx]) {
-        if (t !== label && !STOP.has(t) && t.length >= 4) {
+        if (t !== label && !STOP.has(t) && t.length >= 2) {
           peerFreq.set(t, (peerFreq.get(t) ?? 0) + 1)
         }
       }
