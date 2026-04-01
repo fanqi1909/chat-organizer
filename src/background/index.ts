@@ -558,12 +558,11 @@ Rules:
 Q&A Pairs:
 ${pairList}`
 
-  // Create throwaway conversation for classification
+  // Create throwaway conversation for classification.
+  // Always use Claude API — ChatGPT's API requires Turnstile + Proof-of-Work
+  // which cannot be completed inside a service worker.
   let text: string
-  if (platform === 'chatgpt') {
-    const result = await chatgptApi.createConversationAndSend(prompt)
-    text = result.text
-  } else {
+  {
     const convRes = await fetch(`${baseUrl}/chat_conversations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

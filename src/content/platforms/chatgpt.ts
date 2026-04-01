@@ -40,7 +40,15 @@ export const chatgptAdapter: PlatformAdapter = {
   },
 
   submitInputBox() {
-    // TODO: implement if threading is added for ChatGPT
+    // Send button only appears when there is text — click it if available
+    const btn = document.querySelector('[data-testid="send-button"]') as HTMLButtonElement | null
+    if (btn && !btn.disabled) {
+      btn.click()
+    } else {
+      // Fallback: Enter keydown on the input box
+      const input = this.getInputBox()
+      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    }
   },
 
   /**
