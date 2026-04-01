@@ -1,13 +1,17 @@
 /**
  * ChatGPT MAIN world relay script.
  *
- * Injected at document_start in the MAIN world (page context) so it patches
- * fetch BEFORE ChatGPT's own JS caches the reference. This lets us:
+ * Injected at document_start in the MAIN world (page context).
  *
- * 1. Cache sentinel tokens (Turnstile, PoW, Requirements) from ChatGPT's
- *    own requests whenever the user sends a message normally.
- * 2. Replay those cached tokens when the extension needs to make its own
- *    API call (e.g. for Organize classification).
+ * Problem: ChatGPT's own JS also patches window.fetch, overwriting our wrapper.
+ * Solution: Use Object.defineProperty with a getter/setter trap so that whenever
+ * ChatGPT (or any code) sets window.fetch, we automatically wrap the new value
+ * with our interceptor. This way our caching layer persists no matter how many
+ * times fetch gets reassigned.
+ *
+ * We cache sentinel tokens (Turnstile, PoW, Requirements) from ChatGPT's own
+ * requests, then replay them when the extension needs to call the API for
+ * Organize classification.
  *
  * Communication with the ISOLATED world content script is via window.postMessage.
  */
@@ -18,62 +22,87 @@ interface SentinelTokens {
   proofToken: string
   authorization: string
   timestamp: number
-  /** Extra OAI headers needed for the request */
   oaiHeaders: Record<string, string>
 }
 
-// Cached sentinel tokens from ChatGPT's most recent conversation request
 let cachedTokens: SentinelTokens | null = null
 
-// Patch fetch before ChatGPT's bundle loads
-const origFetch = window.fetch
+// Save the true native fetch before anyone touches it
+const nativeFetch = window.fetch
 
-window.fetch = function (
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
-  const url =
-    typeof input === 'string'
-      ? input
-      : input instanceof Request
-        ? input.url
-        : String(input)
-
-  // Intercept ChatGPT's /f/conversation request to cache sentinel tokens
+function extractSentinelTokens(url: string, init?: RequestInit) {
   if (
-    url.includes('/backend-api/f/conversation') &&
-    !url.includes('prepare') &&
-    init?.method === 'POST' &&
-    init?.headers &&
-    typeof init.headers === 'object' &&
-    !(init.headers instanceof Headers)
+    !url.includes('/backend-api/f/conversation') ||
+    url.includes('prepare') ||
+    init?.method !== 'POST' ||
+    !init?.headers ||
+    typeof init.headers !== 'object' ||
+    init.headers instanceof Headers
   ) {
-    const h = init.headers as Record<string, string>
-    const reqToken = h['OpenAI-Sentinel-Chat-Requirements-Token'] ?? ''
-    const turnstile = h['OpenAI-Sentinel-Turnstile-Token'] ?? ''
-    const proof = h['OpenAI-Sentinel-Proof-Token'] ?? ''
-    const auth = h['Authorization'] ?? ''
-
-    if (reqToken && auth) {
-      const oaiHeaders: Record<string, string> = {}
-      for (const [k, v] of Object.entries(h)) {
-        if (k.startsWith('OAI-') || k === 'X-OpenAI-Target-Path' || k === 'X-OpenAI-Target-Route') {
-          oaiHeaders[k] = v
-        }
-      }
-      cachedTokens = {
-        requirementsToken: reqToken,
-        turnstileToken: turnstile,
-        proofToken: proof,
-        authorization: auth,
-        timestamp: Date.now(),
-        oaiHeaders,
-      }
-    }
+    return
   }
 
-  return origFetch.call(this, input, init)
-} as typeof fetch
+  const h = init.headers as Record<string, string>
+  const reqToken = h['OpenAI-Sentinel-Chat-Requirements-Token'] ?? ''
+  const turnstile = h['OpenAI-Sentinel-Turnstile-Token'] ?? ''
+  const proof = h['OpenAI-Sentinel-Proof-Token'] ?? ''
+  const auth = h['Authorization'] ?? ''
+
+  if (reqToken && auth) {
+    const oaiHeaders: Record<string, string> = {}
+    for (const [k, v] of Object.entries(h)) {
+      if (
+        k.startsWith('OAI-') ||
+        k === 'X-OpenAI-Target-Path' ||
+        k === 'X-OpenAI-Target-Route'
+      ) {
+        oaiHeaders[k] = v
+      }
+    }
+    cachedTokens = {
+      requirementsToken: reqToken,
+      turnstileToken: turnstile,
+      proofToken: proof,
+      authorization: auth,
+      timestamp: Date.now(),
+      oaiHeaders,
+    }
+  }
+}
+
+function wrapFetch(target: typeof fetch): typeof fetch {
+  return function (
+    this: typeof globalThis,
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> {
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input)
+    extractSentinelTokens(url, init)
+    return target.call(this, input, init)
+  } as typeof fetch
+}
+
+// Use defineProperty to intercept any future assignments to window.fetch.
+// This survives ChatGPT's own fetch-patching.
+let currentFetch = wrapFetch(nativeFetch)
+
+Object.defineProperty(window, 'fetch', {
+  configurable: true,
+  enumerable: true,
+  get() {
+    return currentFetch
+  },
+  set(newFetch: typeof fetch) {
+    // ChatGPT (or another script) is reassigning fetch.
+    // Wrap the new value so our interceptor stays in the chain.
+    currentFetch = wrapFetch(newFetch)
+  },
+})
 
 // Listen for classification requests from content script (ISOLATED world)
 window.addEventListener('message', async (event) => {
@@ -118,7 +147,8 @@ window.addEventListener('message', async (event) => {
       'OpenAI-Sentinel-Proof-Token': cachedTokens.proofToken,
     }
 
-    const res = await origFetch.call(window, '/backend-api/f/conversation', {
+    // Use nativeFetch to avoid our own interceptor loop
+    const res = await nativeFetch.call(window, '/backend-api/f/conversation', {
       method: 'POST',
       headers,
       credentials: 'include',
@@ -187,6 +217,3 @@ window.addEventListener('message', async (event) => {
     )
   }
 })
-
-// Signal that the relay is ready
-window.postMessage({ type: 'TP_CHATGPT_RELAY_READY' }, '*')
